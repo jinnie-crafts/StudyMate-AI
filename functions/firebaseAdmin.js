@@ -4,7 +4,11 @@ const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestor
 const { getAuth } = require('firebase-admin/auth');
 const { getStorage } = require('firebase-admin/storage');
 
-require('dotenv').config();
+try {
+  require('dotenv').config();
+} catch (e) {
+  // Ignore missing dotenv in environments where it isn't needed or installed
+}
 
 // Helper to determine project ID
 function getProjectId() {
