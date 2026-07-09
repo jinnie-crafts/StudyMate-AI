@@ -25,14 +25,39 @@ service cloud.firestore {
 
     match /users/{userId} {
 
-      // Create own profile
-      allow create: if isOwner(userId);
+      // Create own profile: enforce unprivileged defaults
+      allow create: if isOwner(userId)
+        && request.resource.data.role == "user"
+        && request.resource.data.isAdmin == false
+        && request.resource.data.isPremium == false
+        && request.resource.data.subscription == "free"
+        && request.resource.data.plan == "free"
+        && request.resource.data.isBlocked == false
+        && request.resource.data.accountStatus == "active";
 
       // Read: only self OR admin
       allow read: if isOwner(userId) || isAdmin();
 
-      // Update: only self
-      allow update: if isOwner(userId);
+      // Update: only self, whitelisted fields, enforce defaults for privileged fields
+      allow update: if isOwner(userId)
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isAdmin', 'isPremium', 'subscription', 'plan', 'isBlocked', 'accountStatus'])
+          || (
+            (!('role' in request.resource.data.diff(resource.data).affectedKeys()) || request.resource.data.role == "user")
+            && (!('isAdmin' in request.resource.data.diff(resource.data).affectedKeys()) || request.resource.data.isAdmin == false)
+            && (!('isPremium' in request.resource.data.diff(resource.data).affectedKeys()) || request.resource.data.isPremium == false)
+            && (!('subscription' in request.resource.data.diff(resource.data).affectedKeys()) || request.resource.data.subscription == "free")
+            && (!('plan' in request.resource.data.diff(resource.data).affectedKeys()) || request.resource.data.plan == "free")
+            && (!('isBlocked' in request.resource.data.diff(resource.data).affectedKeys()) || request.resource.data.isBlocked == false)
+            && (!('accountStatus' in request.resource.data.diff(resource.data).affectedKeys()) || request.resource.data.accountStatus == "active")
+          )
+        )
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'displayName', 'email', 'photoURL', 'lastLogin', 'emailVerified',
+          'onboardingDone', 'hasSeenWelcome', 'settings', 'updatedAt', 'questionsAsked',
+          'questionsToday', 'lastActiveDate', 'streakCount', 'passwordChangeMethod',
+          'passwordChangedAt', 'provider', 'role', 'isAdmin', 'isPremium', 'subscription', 'plan', 'isBlocked', 'accountStatus'
+        ]);
 
       // Delete: disabled
       allow delete: if false;
@@ -196,6 +221,33 @@ service cloud.firestore {
     match /analytics/{document=**} {
       // READ / WRITE: Only admin (backend service uses admin SDK anyway)
       allow read, write: if isAdmin();
+    }
+
+    // -------------------------
+    // 📝 SIGNUP LOGS COLLECTION
+    // -------------------------
+
+    match /signupLogs/{logId} {
+      // READ: Only admin
+      allow read: if isAdmin();
+      
+      // CREATE: Only authenticated user themselves (append-only)
+      allow create: if isAuthenticated() && request.auth.uid == logId;
+      
+      // UPDATE, DELETE: Disabled
+      allow update, delete: if false;
+    }
+
+    // -------------------------
+    // 🛡️ SECURITY LOGS
+    // -------------------------
+
+    match /security_logs/{logId} {
+      // READ: Only admin
+      allow read: if isAdmin();
+      
+      // WRITE: Strictly backend only. Clients cannot create, update, or delete.
+      allow write: if false;
     }
 
     // -------------------------

@@ -1,6 +1,25 @@
 {
   "releases": [
     {
+      "version": "v1.3.0",
+      "date": "2026-07-09",
+      "type": "major",
+      "title": "Platform Security & Experience Updates",
+      "sections": {
+        "added": [
+          "Smart AI Safety Filters to ensure a secure and friendly study environment",
+          "Automated protection systems that prevent unauthorized account actions"
+        ],
+        "improved": [
+          "Enhanced context understanding to minimize false alarms during normal studying",
+          "Faster and more reliable AI response processing"
+        ],
+        "security": [
+          "Upgraded account protection and strict safety guidelines to keep your data safe"
+        ]
+      }
+    },
+    {
       "version": "v1.2.0",
       "date": "2026-05-21",
       "type": "major",

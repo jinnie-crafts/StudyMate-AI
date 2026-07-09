@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  
+
   <title>Sign Up | StudyMate AI</title>
-  <meta name="description" content="Create a free account on StudyMate AI. Join thousands of students using AI to boost their exam preparation and coding skills." />
+  <meta name="description"
+    content="Create a free account on StudyMate AI. Join thousands of students using AI to boost their exam preparation and coding skills." />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://aadirishi.in/signup.html" />
 
@@ -38,69 +40,87 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="preload" as="style" onload="this.onload=null;this.rel='stylesheet'" />
-  <noscript><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="preload"
+    as="style" onload="this.onload=null;this.rel='stylesheet'" />
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet" />
+  </noscript>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="skeleton.css" />
 </head>
+
 <body data-page="signup" class="auth-page">
-  <header class="auth-header">
-    <img src="img/study-mate.png" class="auth-logo" alt="StudyMate Logo" />
-    <div class="auth-badge">StudyMate AI | Premium</div>
-  </header>
+  <div id="verifyModal" class="modal">
+    <div class="modal-box glass-card">
+      <h3 class="auth-title">Check Your Inbox 📧</h3>
+      <p class="auth-subtitle">Verification email sent. Please check your inbox and spam folder to activate your
+        account.</p>
 
-  <section class="auth-content">
-    <div id="verifyModal" class="modal">
-      <div class="modal-box glass-card">
-        <h3 class="auth-title">Check Your Inbox 📧</h3>
-        <p class="auth-subtitle">Verification email sent. Please check your inbox and spam folder to activate your account.</p>
-        
-        <button id="resendVerifyBtn" class="primary-btn resend-btn">Resend Email</button>
-        <p id="verifyStatus" class="verify-status"></p>
-        
-        <button id="closeVerifyModal" class="auth-switch" style="margin-top: 20px; border: none; background: none; cursor: pointer;">Return to Login</button>
-      </div>
+      <button id="resendVerifyBtn" class="primary-btn resend-btn">Resend Email</button>
+      <p id="verifyStatus" class="verify-status"></p>
+
+      <button id="closeVerifyModal" class="auth-switch"
+        style="margin-top: 20px; border: none; background: none; cursor: pointer;">Return to Login</button>
     </div>
+  </div>
+
+    <header class="auth-card-brand" style="margin-bottom: 24px;">
+      <img src="img/study-mate.png" class="auth-logo" alt="StudyMate Logo" />
+      <div class="auth-badge">StudyMate AI | Premium</div>
+    </header>
+
     <main class="auth-card">
-      <div class="auth-card-header">
-        <h1 class="auth-title">Create Account</h1>
-        <p class="auth-subtitle">Join StudyMate and study smarter.</p>
+
+    <div class="auth-card-header">
+      <h1 class="auth-title">Create Account</h1>
+      <p class="auth-subtitle">Join StudyMate and study smarter.</p>
+    </div>
+
+    <form id="signupForm" class="auth-form" novalidate>
+      <input id="signupEmail" type="email" placeholder="Email Address" required />
+      <input id="signupPassword" type="password" placeholder="Password (min 6 chars)" minlength="6" required />
+
+      <label class="agreement-wrapper" for="agreementCheckbox">
+        <div class="checkbox-container">
+          <input type="checkbox" id="agreementCheckbox" aria-label="Agree to Privacy Policy and User Agreement" />
+        </div>
+        <span class="agreement-text">
+          I have read and agree to the <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a> and <a
+            href="terms.html" target="_blank" rel="noopener">User Agreement</a>.
+        </span>
+      </label>
+
+      <button class="primary-btn" type="submit">Create Account</button>
+    </form>
+
+    <div class="auth-divider">
+      <span>OR</span>
+    </div>
+
+    <button id="googleLoginBtn" class="google-btn" type="button">
+      <svg class="google-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#EA4335"
+          d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.5 14.7 2.6 12 2.6 6.9 2.6 2.8 6.7 2.8 11.8S6.9 21 12 21c6.1 0 9.1-4.3 9.1-6.6 0-.4 0-.7-.1-1H12z" />
+        <path fill="#34A853"
+          d="M2.8 11.8c0 1.6.4 3.1 1.2 4.4l3.5-2.7c-.2-.5-.4-1.1-.4-1.7s.1-1.2.4-1.7L4 7.4c-.8 1.3-1.2 2.8-1.2 4.4z" />
+        <path fill="#FBBC05"
+          d="M12 21c2.7 0 4.9-.9 6.6-2.5l-3.2-2.5c-.9.6-2 .9-3.4.9-2.5 0-4.7-1.7-5.5-3.9L4 15.6C5.7 18.9 8.6 21 12 21z" />
+        <path fill="#4285F4"
+          d="M18.6 18.5c1.9-1.8 2.5-4.4 2.5-6.2 0-.6-.1-1.1-.2-1.6H12v3.9h5.5c-.3 1.1-.9 2.7-2.3 3.9l3.4 0z" />
+      </svg>
+      <span>Continue with Google</span>
+    </button>
+
+    <footer class="auth-card-footer">
+      <p id="authMessage" class="form-message"></p>
+      <p class="auth-switch">Already have an account? <a href="login.html">Login</a></p>
+      <div class="auth-legal-links">
+        <a href="privacy.html">Privacy Policy</a>
+        <a href="terms.html">Terms of Service</a>
       </div>
-
-      <form id="signupForm" class="auth-form" novalidate>
-        <input id="signupEmail" type="email" placeholder="Email Address" required />
-        <input id="signupPassword" type="password" placeholder="Password (min 6 chars)" minlength="6" required />
-        
-        <p class="auth-switch" style="font-size: 11px; margin-top: -4px; margin-bottom: 8px;">
-          By creating an account, you agree to our <a href="terms.html">Terms of Service</a> and <a href="privacy.html">Privacy Policy</a>.
-        </p>
-
-        <button class="primary-btn" type="submit">Create Account</button>
-      </form>
-
-      <div class="auth-divider" style="margin: 12px 0;">
-        <span style="background: transparent; color: #64748b; font-size: 12px; font-weight: 600; letter-spacing: 1px;">OR</span>
-      </div>
-
-      <button id="googleLoginBtn" class="google-btn" type="button">
-        <svg class="google-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.5 14.7 2.6 12 2.6 6.9 2.6 2.8 6.7 2.8 11.8S6.9 21 12 21c6.1 0 9.1-4.3 9.1-6.6 0-.4 0-.7-.1-1H12z"/>
-          <path fill="#34A853" d="M2.8 11.8c0 1.6.4 3.1 1.2 4.4l3.5-2.7c-.2-.5-.4-1.1-.4-1.7s.1-1.2.4-1.7L4 7.4c-.8 1.3-1.2 2.8-1.2 4.4z"/>
-          <path fill="#FBBC05" d="M12 21c2.7 0 4.9-.9 6.6-2.5l-3.2-2.5c-.9.6-2 .9-3.4.9-2.5 0-4.7-1.7-5.5-3.9L4 15.6C5.7 18.9 8.6 21 12 21z"/>
-          <path fill="#4285F4" d="M18.6 18.5c1.9-1.8 2.5-4.4 2.5-6.2 0-.6-.1-1.1-.2-1.6H12v3.9h5.5c-.3 1.1-.9 2.7-2.3 3.9l3.4 0z"/>
-        </svg>
-        <span>Continue with Google</span>
-      </button>
-    </main>
-  </section>
-
-  <footer class="auth-footer">
-    <p id="authMessage" class="form-message" style="margin-bottom: 15px;"></p>
-    <p class="auth-switch">Already have an account? <a href="login.html">Login</a></p>
-    <p class="auth-switch" style="margin-top: 12px; font-size: 13px; opacity: 0.8;">
-      <a href="privacy.html">Privacy Policy</a> | <a href="terms.html">Terms of Service</a>
-    </p>
-  </footer>
+    </footer>
+  </main>
 
   <div id="confirmModal" class="modal confirm-modal" aria-hidden="true">
     <div class="modal-content glass-card confirm-content">
@@ -118,7 +138,7 @@
 
   <!-- Early Firebase Action Link Detection -->
   <script>
-    (function() {
+    (function () {
       var params = new URLSearchParams(window.location.search);
       var mode = params.get("mode");
       var oobCode = params.get("oobCode");
@@ -131,4 +151,5 @@
   </script>
   <script type="module" src="app.js"></script>
 </body>
+
 </html>

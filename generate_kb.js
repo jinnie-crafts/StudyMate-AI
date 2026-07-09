@@ -78,7 +78,7 @@ const files = {
 
 for (const [filename, data] of Object.entries(files)) {
   const fullData = {
-    version: "1.0.0",
+    version: "1.2.0",
     lastUpdated: "2026-06-23",
     category: data.category,
     entries: data.entries

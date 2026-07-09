@@ -177,6 +177,9 @@ if (resetBtn) {
       // Confirm the password reset with Firebase
       await confirmPasswordReset(auth, oobCode, newPassword);
       console.log("[RESET] Password reset successful!");
+      
+      // Set flag so we can log this to Firestore on next login
+      localStorage.setItem("studymate_password_reset_pending", "true");
 
       // Success flow
       showResetSuccess(newPassword);

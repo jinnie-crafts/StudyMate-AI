@@ -2,6 +2,8 @@ import { auth, db } from "./firebase.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { collection, doc, setDoc, getDocs, deleteDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { sendAdminNotification } from "./services/notificationService.js";
+import { initSignupLogs } from "./adminSignupLogs.js";
+import { initSecurityLogs } from "./adminSecurityLogs.js";
 
 // â”€â”€ DOM Elements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const dom = {
@@ -111,8 +113,11 @@ const setupUI = () => {
   // Hide loader and show body
   if (dom.authLoader) dom.authLoader.style.display = "none";
   dom.body.classList.add("ready");
-  
-  // Tab Switching
+
+  // Initialize all tab modules
+  initSignupLogs();
+  initSecurityLogs();
+
   dom.tabBtns.forEach(btn => {
     btn.addEventListener("click", () => {
       dom.tabBtns.forEach(b => b.classList.remove("active"));
@@ -666,11 +671,21 @@ const initKbSystem = () => {
   fetchKbEntries();
 };
 
+const getAuthHeaders = async () => {
+  if (!auth.currentUser) throw new Error("Not authenticated");
+  const token = await auth.currentUser.getIdToken();
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`
+  };
+};
+
 const fetchKbEntries = async () => {
   try {
     console.log("Loading Knowledge...");
     console.log(`[KB] Fetching entries from ${API_BASE_URL}/api/kb`);
-    const res = await fetch(`${API_BASE_URL}/api/kb`);
+    const headers = await getAuthHeaders();
+    const res = await fetch(`${API_BASE_URL}/api/kb`, { headers });
     
     if (!res.ok) {
       const text = await res.text();
@@ -777,9 +792,10 @@ const handleKbSubmit = async (e) => {
 
   try {
     console.log(`[KB] Saving entry to ${API_BASE_URL}/api/kb/entry`);
+    const headers = await getAuthHeaders();
     const res = await fetch(`${API_BASE_URL}/api/kb/entry`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(payload)
     });
     
@@ -805,9 +821,10 @@ const deleteKbEntry = async (filename, id) => {
 
   try {
     console.log(`[KB] Deleting entry ${id} from ${API_BASE_URL}/api/kb/entry`);
+    const headers = await getAuthHeaders();
     const res = await fetch(`${API_BASE_URL}/api/kb/entry`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ filename, id })
     });
     
@@ -831,9 +848,10 @@ const syncKbToFirestore = async () => {
   console.log("[KB] Firestore Sync Started");
 
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch(`${API_BASE_URL}/api/kb/sync`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" }
+      headers
     });
     
     if (!res.ok) {

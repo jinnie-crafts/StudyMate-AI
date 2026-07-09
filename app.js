@@ -9,8 +9,14 @@ import {
   updateProfile,
   sendEmailVerification,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  getAdditionalUserInfo,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { LEGAL_CONFIG } from "./config/legalConfig.js";
 import {
   doc,
   setDoc as rawSetDoc,
@@ -30,6 +36,8 @@ import {
 import { initNotifications, stopNotifications } from "./notificationBell.js";
 import { marked } from "https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js";
 import hljs from "https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/+esm";
+
+const PASSWORD_DELETE_PROTECTION_DAYS = 3;
 
 // ---------------------------------------------------------------------------
 // Network Layer Hardening (Safe Fetch Wrapper)
@@ -457,6 +465,14 @@ function initSignupPage() {
       return;
     }
 
+    const agreementCheckbox = document.getElementById("agreementCheckbox");
+    if (agreementCheckbox && !agreementCheckbox.checked) {
+      setFormMessage(authMessage, "You must agree to the Privacy Policy and User Agreement before creating an account.", "error");
+      showToast("You must agree to the Privacy Policy and User Agreement before creating an account.", "error");
+      agreementCheckbox.focus();
+      return;
+    }
+
     try {
       await validateSignupEmail(email);
     } catch (validationError) {
@@ -477,30 +493,37 @@ function initSignupPage() {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        console.log("User created:", user.email);
+        console.info(`[AUTH] Signup Success: ${user.email}`);
 
         // SEND VERIFICATION EMAIL
         try {
-          console.log("Sending verification email...");
+          console.info("[AUTH] Sending verification email...");
           await sendEmailVerification(user, {
             url: window.location.origin
           });
-          console.log("Verification email sent");
+          console.info("[AUTH] Verification email sent successfully");
         } catch (emailError) {
-          console.error("Email send failed:", emailError);
+          console.error("[AUTH] Verification email send failed:", emailError);
+          // If sending email fails, delete the auth account to prevent unverified orphaned accounts
+          await user.delete();
+          setFormMessage(authMessage, "Failed to send verification email. Please try again later.", "error");
+          
+          isSubmitting = false;
+          if (submitBtn) submitBtn.disabled = false;
+          return;
         }
 
         // ENSURE FIRESTORE SYNC
-        await ensureUserDocument(user);
+        await ensureUserDocument(user, true, "email");
 
         // SHOW SUCCESS MESSAGE (Specific)
-        setFormMessage(authMessage, "Verification email sent. Please check your inbox and spam folder.", "success");
+        setFormMessage(authMessage, "Verification email sent. Redirecting to verification page...", "success");
 
-        // SIGN OUT (IMPORTANT: must verify before full session)
-        await signOut(auth);
-
-        // TRIGGER MODAL
-        showVerificationModal(user);
+        // Do not sign out! The onAuthStateChanged listener will automatically 
+        // trigger runAuthGuard which redirects unverified users to verify.html.
+        
+        // Trigger modal is no longer needed since we redirect to a dedicated page
+        // showVerificationModal(user);
 
       } catch (err) {
         console.error("Signup error:", err.code);
@@ -597,9 +620,19 @@ function showVerificationModal(user) {
 
 async function loginWithGoogle() {
   try {
+    const agreementCheckbox = document.getElementById("agreementCheckbox");
+    if (agreementCheckbox && !agreementCheckbox.checked) {
+      showToast("You must agree to the Privacy Policy and User Agreement before creating an account.", "error");
+      agreementCheckbox.focus();
+      return;
+    }
+
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
-    await ensureUserDocument(result.user);
+    const { isNewUser } = getAdditionalUserInfo(result);
+
+
+    await ensureUserDocument(result.user, isNewUser, "google");
     queueFlashToast("Signed in with Google.", "success");
     window.location.replace("index.html");
   } catch (err) { console.error("Google login error:", err); showToast(err.message, "error"); }
@@ -609,49 +642,97 @@ async function loginWithGoogle() {
 // Firestore user document
 // ---------------------------------------------------------------------------
 
-async function ensureUserDocument(user) {
-  if (!user) return;
+async function ensureUserDocument(user, isNewUser = false, authProvider = null) {
+  if (!user) return null;
   try {
     const userRef = doc(db, "users", user.uid);
     const snap = await getDoc(userRef);
     if (!snap.exists()) {
-      await setDoc(userRef, {
+      const newUserDoc = {
         uid: user.uid,
         name: user.displayName || "User",
+        displayName: user.displayName || "User",
         email: user.email || "",
         photoURL: user.photoURL || "",
+        provider: authProvider || "email",
+        emailVerified: user.emailVerified || false,
+        createdAt: serverTimestamp(),
+        lastLogin: serverTimestamp(),
+        accountStatus: "active",
+        role: "user",
+        subscription: "free",
+        plan: "free",
+        isBlocked: false,
+        isPremium: false,
+        isAdmin: false,
         onboardingDone: false,
-        hasSeenWelcome: false,
-        createdAt: serverTimestamp()
-      });
+        hasSeenWelcome: false
+      };
+
+      if (isNewUser) {
+        newUserDoc.acceptedPrivacyPolicy = true;
+        newUserDoc.acceptedTerms = true;
+        newUserDoc.agreementAccepted = true; // Legacy support
+        newUserDoc.agreementAcceptedAt = serverTimestamp();
+        newUserDoc.agreementAcceptedVersion = typeof LEGAL_CONFIG !== 'undefined' ? LEGAL_CONFIG.agreementVersion : "1.2.0";
+        newUserDoc.agreementAcceptedMethod = authProvider;
+        newUserDoc.agreementAcceptedUserAgent = navigator.userAgent;
+        newUserDoc.verificationEmailSentAt = serverTimestamp();
+      }
+
+      await setDoc(userRef, newUserDoc, { merge: true });
       state.userOnboardingDone = false;
+      
       // Fire-and-forget welcome notification for new users
       sendWelcomeNotification(user.uid);
+      return newUserDoc;
     } else {
       const data = snap.data();
       const hasSeenWelcome = Boolean(data.hasSeenWelcome ?? data.onboardingDone ?? false);
       state.userOnboardingDone = hasSeenWelcome;
+      
       const profilePatch = {
-        name: user.displayName || data.name || "User",
+        name: user.displayName || data.name || data.displayName || "User",
+        displayName: user.displayName || data.displayName || data.name || "User",
         email: user.email || data.email || "",
-        photoURL: user.photoURL || snap.data().photoURL || ""
+        photoURL: user.photoURL || data.photoURL || "",
+        lastLogin: serverTimestamp(),
+        emailVerified: user.emailVerified || data.emailVerified || false
       };
+
+      // Set defaults for existing users if missing
+      if (data.provider === undefined && authProvider) profilePatch.provider = authProvider;
+      if (data.accountStatus === undefined) profilePatch.accountStatus = "active";
+      if (data.role === undefined) profilePatch.role = "user";
+      if (data.subscription === undefined) profilePatch.subscription = "free";
+      if (data.plan === undefined) profilePatch.plan = "free";
+      if (data.isBlocked === undefined) profilePatch.isBlocked = false;
+      if (data.isPremium === undefined) profilePatch.isPremium = false;
+      if (data.isAdmin === undefined) profilePatch.isAdmin = false;
+      
       if (data.hasSeenWelcome === undefined) {
         profilePatch.hasSeenWelcome = hasSeenWelcome;
       }
-      await updateDoc(userRef, {
-        ...profilePatch
-      });
+
+      // Legacy user handling
+      if (data.agreementAccepted === undefined) {
+        profilePatch.agreementAccepted = null;
+      }
+
+      await setDoc(userRef, profilePatch, { merge: true });
+      return { ...data, ...profilePatch };
     }
   } catch (error) {
-    console.error(error);
+    console.error("Error ensuring user document:", error);
     if (error.code === "permission-denied") {
       showToast("Access denied");
     } else {
       showToast("Something went wrong");
     }
+    return null;
   }
 }
+
 
 async function loadTrackerData() {
   if (!state.currentUser) return;
@@ -955,6 +1036,7 @@ function startDashboardApp(user) {
   loadChats(targetChatId || undefined);
 
   // 4. Handle initial SPA view routing (e.g. ?view=changelog)
+
   const params = new URLSearchParams(window.location.search);
   if (params.get("view") === "changelog") {
     toggleChangelogView(true);
@@ -1050,7 +1132,7 @@ async function handleStart() {
 
     // Auto focus input
     if (ui.userInput) {
-      ui.userInput.placeholder = "Ask anything... (e.g. Explain photosynthesis)";
+      ui.userInput.placeholder = "Ask anything...";
       ui.userInput.focus();
     }
 
@@ -1201,7 +1283,7 @@ function initSettingsPage() {
 
 function bindSettingsEvents() {
   if (ui.saveAccountBtn) ui.saveAccountBtn.addEventListener("click", () => saveAccountProfile());
-  if (ui.changePasswordBtn) ui.changePasswordBtn.addEventListener("click", () => handlePasswordResetRequest());
+  if (ui.changePasswordBtn) ui.changePasswordBtn.addEventListener("click", () => handleInAppPasswordChange());
   if (ui.logoutAllSessionsBtn) ui.logoutAllSessionsBtn.addEventListener("click", () => confirmLogoutAll());
   if (ui.fullLogoutBtn) ui.fullLogoutBtn.addEventListener("click", () => confirmLogoutAll());
 
@@ -1374,21 +1456,78 @@ function applyFontSize(size) {
   document.body.style.fontSize = `${size}px`;
 }
 
-async function handlePasswordResetRequest() {
-  const confirmed = await showConfirm({
-    label: "Security",
-    title: "Reset Password?",
-    message: "We will send a password reset link to your email address.",
-    confirmText: "Send Link"
-  });
-  if (!confirmed) return;
+function handleInAppPasswordChange() {
+  const modal = document.getElementById("inAppPasswordChangeModal");
+  const cancelBtn = document.getElementById("cancelInAppPasswordBtn");
+  const confirmBtn = document.getElementById("confirmInAppPasswordBtn");
+  
+  const currentPassInput = document.getElementById("inAppCurrentPassword");
+  const newPassInput = document.getElementById("inAppNewPassword");
+  const confirmPassInput = document.getElementById("inAppConfirmPassword");
 
-  try {
-    await sendPasswordResetEmail(auth, state.currentUser.email);
-    showToast("Reset link sent to your email", "success");
-  } catch (err) {
-    showToast(err.message, "error");
-  }
+  if (!modal || !cancelBtn || !confirmBtn) return;
+
+  // Reset fields
+  currentPassInput.value = "";
+  newPassInput.value = "";
+  confirmPassInput.value = "";
+  modal.classList.add("show");
+
+  cancelBtn.onclick = () => {
+    modal.classList.remove("show");
+  };
+
+  confirmBtn.onclick = async () => {
+    const currentPassword = currentPassInput.value;
+    const newPassword = newPassInput.value;
+    const confirmPassword = confirmPassInput.value;
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      showToast("Please fill in all fields", "error");
+      return;
+    }
+    if (newPassword.length < 6) {
+      showToast("New password must be at least 6 characters", "error");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast("New passwords do not match", "error");
+      return;
+    }
+
+    try {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Updating...";
+
+      // Re-authenticate
+      const credential = EmailAuthProvider.credential(state.currentUser.email, currentPassword);
+      await reauthenticateWithCredential(state.currentUser, credential);
+
+      // Update password
+      await updatePassword(state.currentUser, newPassword);
+
+      // Log source to Firestore
+      await updateDoc(doc(db, "users", state.currentUser.uid), {
+        passwordChangeMethod: "in-app",
+        passwordChangedAt: serverTimestamp()
+      });
+
+      showToast("Password updated successfully", "success");
+      modal.classList.remove("show");
+    } catch (err) {
+      console.error("Password update error:", err);
+      if (err.code === "auth/invalid-credential") {
+        showToast("Incorrect current password", "error");
+      } else if (err.code === "auth/requires-recent-login") {
+        showToast("Session expired. Please log out and log back in.", "error");
+      } else {
+        showToast(err.message, "error");
+      }
+    } finally {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Update Password";
+    }
+  };
 }
 
 async function exportUserData() {
@@ -1429,39 +1568,112 @@ async function handleDeleteAccount() {
   const step1 = await showConfirm({
     label: "Danger Zone",
     title: "Delete Account Forever?",
-    message: "This will permanently delete your profile, all chats, and settings. This cannot be undone.",
+    message: "Are you sure you want to permanently delete your StudyMate AI account?\n\nThis action cannot be undone.",
     confirmText: "Continue",
     type: "danger"
   });
   if (!step1) return;
 
-  const step2 = await showConfirm({
-    label: "Last Warning",
-    title: "Are you absolutely sure?",
-    message: "This is your LAST chance to go back. ALL data will be wiped.",
-    confirmText: "DELETE EVERYTHING",
-    type: "danger"
-  });
-  if (!step2) return;
+  const isGoogle = state.currentUser.providerData.some(p => p.providerId === 'google.com');
 
+  if (isGoogle) {
+    const step2 = await showConfirm({
+      label: "Verify Identity",
+      title: "Re-authenticate",
+      message: "Please sign in with Google again to confirm your identity before deleting your account.",
+      confirmText: "Sign in with Google",
+      type: "info"
+    });
+    if (!step2) return;
+    try {
+      await reauthenticateWithPopup(state.currentUser, new GoogleAuthProvider());
+    } catch (err) {
+      console.error("Google Reauth Error:", err);
+      showToast("Authentication failed: " + err.message, "error");
+      return;
+    }
+    await processAccountDeletion();
+  } else {
+    // Show password re-auth modal
+    const modal = document.getElementById("deleteReauthModal");
+    const cancelBtn = document.getElementById("cancelDeleteReauthBtn");
+    const confirmBtn = document.getElementById("confirmDeleteReauthBtn");
+    const passInput = document.getElementById("deleteReauthPassword");
+    
+    if (!modal || !cancelBtn || !confirmBtn || !passInput) return;
+
+    passInput.value = "";
+    modal.classList.add("show");
+
+    return new Promise((resolve) => {
+      cancelBtn.onclick = () => {
+        modal.classList.remove("show");
+        resolve(false);
+      };
+
+      confirmBtn.onclick = async () => {
+        const pwd = passInput.value;
+        if (!pwd) {
+          showToast("Please enter your current password", "error");
+          return;
+        }
+
+        try {
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Verifying...";
+          const credential = EmailAuthProvider.credential(state.currentUser.email, pwd);
+          await reauthenticateWithCredential(state.currentUser, credential);
+          modal.classList.remove("show");
+          await processAccountDeletion();
+          resolve(true);
+        } catch (err) {
+          console.error("Reauth Error:", err);
+          if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
+            showToast("Incorrect password.", "error");
+          } else {
+            showToast("Authentication failed: " + err.message, "error");
+          }
+        } finally {
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = "Confirm Delete";
+        }
+      };
+    });
+  }
+}
+
+async function processAccountDeletion() {
   try {
-    // 1. Delete Firestore Chats
-    const chatsQuery = query(collection(db, "chats"), where("userId", "==", state.currentUser.uid));
-    const snapshot = await getDocs(chatsQuery);
-    for (const d of snapshot.docs) {
-      await deleteDoc(doc(db, "chats", d.id));
+    const userRef = doc(db, "users", state.currentUser.uid);
+    const userDoc = await getDoc(userRef);
+    if (userDoc.exists()) {
+      const data = userDoc.data();
+      if (data.passwordChangeMethod === "forgot-password" && data.passwordChangedAt) {
+        const changedTime = data.passwordChangedAt.toDate ? data.passwordChangedAt.toDate() : new Date(data.passwordChangedAt);
+        const daysSinceChange = (Date.now() - changedTime.getTime()) / (1000 * 3600 * 24);
+        if (daysSinceChange < PASSWORD_DELETE_PROTECTION_DAYS) {
+          showToast(`Password recently changed. Due to security reasons, your account cannot be deleted right now. Please try again after ${PASSWORD_DELETE_PROTECTION_DAYS} days.`, "error");
+          return;
+        }
+      }
     }
 
-    // 2. Delete User Doc
-    await deleteDoc(doc(db, "users", state.currentUser.uid));
+    console.info(`[ACCOUNT] Soft-deleting account for UID: ${state.currentUser.uid}`);
+    
+    await updateDoc(userRef, {
+      deleted: true,
+      deletedAt: serverTimestamp(),
+      accountStatus: "deleted"
+    });
 
-    // 3. Delete Auth Account
     await state.currentUser.delete();
+    console.info(`[ACCOUNT] Successfully deleted Firebase Auth for UID: ${state.currentUser.uid}`);
 
-    window.location.replace("signup.html");
+    await signOut(auth);
+    window.location.replace("login.html");
   } catch (err) {
     console.error("Delete error:", err);
-    showToast("Error during deletion. Try logging in again first.", "error");
+    showToast("Error during deletion: " + err.message, "error");
   }
 }
 
@@ -1979,10 +2191,10 @@ function renderMath() {
   try {
     renderMathInElement(ui.chatMessages, {
       delimiters: [
-        {left: '$$', right: '$$', display: true},
-        {left: '\\[', right: '\\]', display: true},
-        {left: '$', right: '$', display: false},
-        {left: '\\(', right: '\\)', display: false}
+        { left: '$$', right: '$$', display: true },
+        { left: '\\[', right: '\\]', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false }
       ],
       ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code", "option"],
       throwOnError: false
@@ -2088,14 +2300,28 @@ async function fetchAIResponse(messages, mode, hinglishEnabled, notesMode) {
       preferred_tone: state.userSettings.aiTone || "professional",
       model_choice: state.userSettings.aiModel || "auto"
     },
+    userContext: {
+      email: state.currentUser?.email || "",
+      name: state.currentUser?.displayName || "",
+      provider: state.currentUser?.providerData?.[0]?.providerId || ""
+    },
     userMemory: state.userMemory
   };
 
   try {
     const controller = new AbortController();
+    const headers = { "Content-Type": "application/json" };
+    if (auth.currentUser) {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      } catch (tokenErr) {
+        console.error("Failed to retrieve ID token:", tokenErr);
+      }
+    }
     const response = await fetch(`${API_BASE_URL}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       signal: controller.signal,
       body: JSON.stringify(requestPayload)
     });
@@ -2655,9 +2881,9 @@ function toggleChangelogView(show) {
 async function renderChangelog() {
   if (!ui.changelogContent) return;
   ui.changelogContent.innerHTML = `<div style="text-align:center; padding: 40px; color: var(--text-soft)">Loading updates...</div>`;
-  
+
   let releases = [];
-  
+
   try {
     // 1. Try fetching from Firestore
     const q = query(collection(db, "changelogs"), where("published", "==", true), orderBy("createdAt", "desc"));
@@ -2676,7 +2902,7 @@ async function renderChangelog() {
           } else if (data.createdAt?.seconds) {
             formattedDate = new Date(data.createdAt.seconds * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
           }
-        } catch(e) {
+        } catch (e) {
           console.warn("Date formatting error:", e);
         }
 
@@ -2700,7 +2926,7 @@ async function renderChangelog() {
       const res = await fetch("/config/changelog.json?t=" + Date.now());
       if (!res.ok) throw new Error("Failed to load changelog.json");
       const data = await res.json();
-      
+
       let rawReleases = Array.isArray(data.releases) ? data.releases : [];
       // Safe sort
       rawReleases.sort((a, b) => {
@@ -2708,7 +2934,7 @@ async function renderChangelog() {
         const dB = new Date(b.date).getTime();
         return (isNaN(dB) ? 0 : dB) - (isNaN(dA) ? 0 : dA);
       });
-      
+
       const seenVersions = new Set();
       releases = rawReleases.filter(r => {
         if (!r.version) return false;
@@ -2747,7 +2973,7 @@ async function renderChangelog() {
     const latestClass = isLatest ? "is-latest" : "";
     const newBadge = isLatest ? `<span class="release-badge new-badge" style="background: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid rgba(231,76,60,0.4); padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold;">NEW</span>` : "";
     const isExpanded = isLatest ? "open" : "";
-    
+
     // Determine badge color class based on type
     let typeClass = "";
     if (release.type === "major") typeClass = "major";
@@ -2769,7 +2995,7 @@ async function renderChangelog() {
       if (typeof marked !== 'undefined') {
         htmlContent = marked.parse(text);
         if (typeof sanitizeRenderedHtml === 'function') {
-           htmlContent = sanitizeRenderedHtml(String(htmlContent));
+          htmlContent = sanitizeRenderedHtml(String(htmlContent));
         }
       } else {
         htmlContent = escapeHtml(text);
@@ -2813,15 +3039,15 @@ async function renderChangelog() {
       try {
         renderMathInElement(ui.changelogContent, {
           delimiters: [
-            {left: '$$', right: '$$', display: true},
-            {left: '\\[', right: '\\]', display: true},
-            {left: '$', right: '$', display: false},
-            {left: '\\(', right: '\\)', display: false}
+            { left: '$$', right: '$$', display: true },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false }
           ],
           ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code", "option"],
           throwOnError: false
         });
-      } catch(e) {
+      } catch (e) {
         console.error("KaTeX error in changelog:", e);
       }
     }
@@ -3186,7 +3412,7 @@ async function initVersioning() {
   const versionDisplay = document.getElementById("appVersionDisplay");
   if (!versionDisplay) return;
 
-  let version = "v1.0.0"; // fallback
+  let version = "v1.3.0"; // fallback
 
   if (window.APP_VERSION) {
     version = window.APP_VERSION;
@@ -3526,6 +3752,121 @@ if (typeof document !== "undefined") {
 // ---------------------------------------------------------------------------
 
 /**
+ * runAuthGuard(user)
+ * Dedicated authentication guard. Validates authentication state, verification, and policies.
+ */
+async function runAuthGuard(user) {
+  const currentPage = document.body.dataset.page;
+  const isAuthPage = ["login", "signup", "forgot"].includes(currentPage);
+  const isVerifyPage = currentPage === "verify";
+
+  // 1. Fetch/ensure user doc
+  const userDocData = await ensureUserDocument(user);
+  if (!userDocData) {
+     console.error("[AUTH GUARD] User doc missing or could not be fetched.");
+     await signOut(auth);
+     if (currentPage !== "login") window.location.replace("login.html");
+     return false;
+  }
+
+  // 2. Check if deleted or blocked
+  if (userDocData.deleted || userDocData.accountStatus === "deleted") {
+     console.warn("[AUTH GUARD] Account is deleted.");
+     await signOut(auth);
+     if (currentPage !== "login") window.location.replace("login.html");
+     return false;
+  }
+  if (userDocData.isBlocked) {
+     console.warn("[AUTH GUARD] Account is blocked.");
+     await signOut(auth);
+     if (currentPage !== "login") window.location.replace("login.html");
+     return false;
+  }
+
+  // 3. Email Verification Check
+  const isGoogle = user.providerData.some(p => p.providerId === 'google.com');
+  const needsVerification = !isGoogle && !user.emailVerified;
+  
+  if (needsVerification) {
+     console.warn("[AUTH GUARD] User email not verified. Blocking access.");
+     if (!isVerifyPage) {
+        window.location.replace("verify.html");
+     }
+     return false; 
+  } else if (isVerifyPage) {
+     console.info("[AUTH GUARD] User is verified. Redirecting from verify page to home.");
+     window.location.replace("index.html");
+     return false;
+  }
+
+  // 4. Terms Acceptance Check
+  const currentVersion = typeof LEGAL_CONFIG !== 'undefined' ? LEGAL_CONFIG.agreementVersion : "1.2.0";
+  // We check for acceptedTerms == true AND acceptedPrivacyPolicy == true, OR fallback to legacy agreementAccepted
+  const hasAgreed = (userDocData.acceptedTerms && userDocData.acceptedPrivacyPolicy) || userDocData.agreementAccepted;
+  const needsConsent = !hasAgreed || (userDocData.agreementVersion && userDocData.agreementVersion !== currentVersion);
+  
+  if (needsConsent && !isAuthPage && !isVerifyPage) {
+    console.info("[AUTH GUARD] Showing terms consent modal.");
+    const accepted = await requireTermsAcceptance(user);
+    if (!accepted) {
+      console.warn("[AUTH GUARD] User refused terms.");
+      await signOut(auth);
+      window.location.replace("login.html");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function requireTermsAcceptance(user) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("termsConsentModal");
+    const checkbox = document.getElementById("termsConsentCheckbox");
+    const acceptBtn = document.getElementById("termsConsentAcceptBtn");
+    const logoutBtn = document.getElementById("termsConsentLogoutBtn");
+
+    if (!modal) {
+       console.error("Terms modal not found in DOM!");
+       resolve(false); 
+       return;
+    }
+
+    modal.classList.add("show");
+
+    checkbox.addEventListener("change", (e) => {
+       acceptBtn.disabled = !e.target.checked;
+       acceptBtn.style.opacity = e.target.checked ? "1" : "0.5";
+    });
+
+    acceptBtn.onclick = async () => {
+      acceptBtn.disabled = true;
+      acceptBtn.textContent = "Updating...";
+      try {
+        const currentVersion = typeof LEGAL_CONFIG !== 'undefined' ? LEGAL_CONFIG.agreementVersion : "1.2.0";
+        await updateDoc(doc(db, "users", user.uid), {
+           acceptedPrivacyPolicy: true,
+           acceptedTerms: true,
+           agreementVersion: currentVersion,
+           agreementAcceptedAt: serverTimestamp()
+        });
+        modal.classList.remove("show");
+        console.info("[AUTH GUARD] Terms accepted.");
+        resolve(true);
+      } catch (err) {
+        console.error("Failed to accept terms:", err);
+        acceptBtn.disabled = false;
+        acceptBtn.textContent = "Accept & Continue";
+      }
+    };
+
+    logoutBtn.onclick = () => {
+       resolve(false);
+    };
+  });
+}
+
+/**
  * initAuth()
  * Centralized Firebase Auth listener that serves as the primary gatekeeper.
  */
@@ -3546,7 +3887,28 @@ async function initAuth() {
         return;
       }
 
-      // User is logged in
+      // Run deep authentication guard checks before allowing access
+      const authOk = await runAuthGuard(user);
+      if (!authOk) {
+        resolve(null);
+        return;
+      }
+
+      // Check if there's a pending password reset to log
+      if (localStorage.getItem("studymate_password_reset_pending") === "true") {
+        try {
+          await updateDoc(doc(db, "users", user.uid), {
+            passwordChangeMethod: "forgot-password",
+            passwordChangedAt: serverTimestamp()
+          });
+          localStorage.removeItem("studymate_password_reset_pending");
+          console.info("[AUTH] Logged password reset source to Firestore.");
+        } catch (err) {
+          console.error("Failed to log password reset source:", err);
+        }
+      }
+
+      // User is fully authenticated, verified, and accepted terms
       if (isAuthPage) {
         window.location.replace("index.html");
         return;
@@ -3565,8 +3927,6 @@ async function initAuth() {
  */
 async function initApp(user) {
   try {
-    await ensureUserDocument(user);
-
     // Core Shared Init
     const page = document.body.dataset.page;
 
@@ -3718,7 +4078,7 @@ function initMermaidSingleton() {
     mermaid.initialize({
       startOnLoad: false,
       theme: document.body.classList.contains("light") ? "default" : "dark",
-      securityLevel: "loose",
+      securityLevel: "strict",
       flowchart: { useMaxWidth: true, htmlLabels: true, curve: "basis" }
     });
     window.__MERMAID_INITIALIZED__ = true;
@@ -3749,3 +4109,16 @@ if (document.readyState === "loading") {
 } else {
   bootstrap();
 }
+
+// ---------------------------------------------------------------------------
+// PAGE-SPECIFIC DOM LOADED HANDLERS
+// ---------------------------------------------------------------------------
+document.addEventListener("DOMContentLoaded", () => {
+  // Stop link clicks inside the agreement label from toggling the checkbox
+  const agreementLinks = document.querySelectorAll(".agreement-text a");
+  agreementLinks.forEach(link => {
+    link.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+  });
+});

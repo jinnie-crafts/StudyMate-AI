@@ -43,7 +43,7 @@ Do not output any markdown code blocks (\`\`\`json) or other text. Just the raw 
 
   const requestMessages = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: `User message: "${lastUserMessage.content}"` }
+    { role: "user", content: `User message: ${JSON.stringify(lastUserMessage.content)}` }
   ];
 
   try {

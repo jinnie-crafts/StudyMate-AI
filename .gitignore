@@ -6,10 +6,10 @@ jspm_packages/
 # --- Environment and Secrets ---
 .env
 .env.*
-!.env.example
-!.env.template
 **/.env
 **/.env.*
+!**/.env.example
+!**/.env.template
 *.pem
 *.key
 *.cert
@@ -24,6 +24,7 @@ serviceAccountKey.json
 
 # --- Logs and Debugging ---
 logs/
+log/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -31,6 +32,12 @@ yarn-error.log*
 pnpm-debug.log*
 firebase-debug.log
 firebase-debug.*.log
+firestore-debug.log
+pubsub-debug.log
+database-debug.log
+storage-debug.log
+auth-debug.log
+emulator-debug.log
 ui-debug.log
 
 # --- Build and Dist ---
@@ -46,6 +53,8 @@ out/
 # --- IDE and Editor files ---
 .vscode/
 .idea/
+.vs/
+.history/
 *.suo
 *.ntvs*
 *.njsproj

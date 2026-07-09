@@ -91,6 +91,20 @@
         </svg>
         Knowledge Base
       </button>
+      <button class="admin-tab-btn" data-tab="tab-signuplogs">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H5c-1.1 0-2 .9-2 2v2"></path>
+          <circle cx="8.5" cy="7" r="4"></circle>
+          <polyline points="17 11 19 13 23 9"></polyline>
+        </svg>
+        Users
+      </button>
+      <button class="admin-tab-btn" data-tab="tab-securitylogs">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+        </svg>
+        Security Logs
+      </button>
     </div>
 
     <div class="admin-tab-content active" id="tab-notifications">
@@ -407,6 +421,85 @@
       </div>
     </div> <!-- End KB Tab -->
 
+    <!-- SIGNUP LOGS TAB -->
+    <div class="admin-tab-content" id="tab-signuplogs">
+      <header class="admin-header">
+        <h1>Users & Consent</h1>
+        <p>Monitor new user signups, legacy users, and accepted terms.</p>
+        
+        <div class="admin-actions" style="margin-top: 16px;">
+          <button id="exportCsvBtn" class="admin-send-btn" style="padding: 6px 12px; font-size: 12px;">Export CSV</button>
+          <button id="exportJsonBtn" class="admin-send-btn" style="padding: 6px 12px; font-size: 12px;">Export JSON</button>
+        </div>
+      </header>
+
+      <!-- Stats Cards -->
+      <div class="admin-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 24px;">
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">Total Users</h3><p id="statTotalUsers" style="font-size: 24px; font-weight: bold;">0</p></div>
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">Today</h3><p id="statTodaySignups" style="font-size: 24px; font-weight: bold;">0</p></div>
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">This Week</h3><p id="statWeekSignups" style="font-size: 24px; font-weight: bold;">0</p></div>
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">This Month</h3><p id="statMonthSignups" style="font-size: 24px; font-weight: bold;">0</p></div>
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">Accepted Terms</h3><p id="statAccepted" style="font-size: 24px; font-weight: bold;">0</p></div>
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">Legacy Users</h3><p id="statLegacy" style="font-size: 24px; font-weight: bold;">0</p></div>
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">Google</h3><p id="statGoogle" style="font-size: 24px; font-weight: bold;">0</p></div>
+        <div class="glass-card stat-card" style="padding: 16px; text-align: center;"><h3 style="font-size: 12px; color: var(--text-soft); margin-bottom: 8px;">Email</h3><p id="statEmail" style="font-size: 24px; font-weight: bold;">0</p></div>
+      </div>
+
+      <!-- Filters & Search -->
+      <div class="glass-card" style="margin-bottom: 24px; padding: 16px;">
+        <div class="controls-row" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+          <input type="text" id="logSearchInput" class="admin-input" placeholder="Search Name, Email, or UID..." style="flex: 1; min-width: 200px;">
+          
+          <select id="logMethodFilter" class="admin-select" style="width: auto;">
+            <option value="all">All Methods</option>
+            <option value="email">Email Signups</option>
+            <option value="google">Google Signups</option>
+            <option value="legacy">Legacy Users</option>
+          </select>
+          
+          <select id="logStatusFilter" class="admin-select" style="width: auto;">
+            <option value="all">All Status</option>
+            <option value="active">Active</option>
+            <option value="deleted">Deleted</option>
+          </select>
+          
+          <select id="logVersionFilter" class="admin-select" style="width: auto;">
+            <option value="all">All Versions</option>
+            <option value="1.3.0">v1.3.0</option>
+            <option value="1.2.0">v1.2.0</option>
+          </select>
+
+          <button id="refreshLogsBtn" class="admin-send-btn" style="padding: 8px 16px;">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Logs Table -->
+      <div class="glass-card table-container" style="overflow-x: auto; padding: 0;">
+        <table class="admin-table" style="width: 100%; min-width: 800px; text-align: left; border-collapse: collapse;">
+          <thead>
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+              <th style="padding: 12px 16px;">User</th>
+              <th style="padding: 12px 16px;">Registration Date</th>
+              <th style="padding: 12px 16px;">Auth Provider</th>
+              <th style="padding: 12px 16px;">Consent</th>
+              <th style="padding: 12px 16px;">Role / Status</th>
+              <th style="padding: 12px 16px;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody">
+            <!-- Dynamic Logs -->
+          </tbody>
+        </table>
+        
+        <!-- Pagination -->
+        <div class="pagination-controls" style="padding: 16px; display: flex; justify-content: center; gap: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+          <button id="logsPrevBtn" class="admin-send-btn" disabled>Previous</button>
+          <span id="logsPageIndicator" style="display: flex; align-items: center; font-size: 14px;">Page 1</span>
+          <button id="logsNextBtn" class="admin-send-btn" disabled>Next</button>
+        </div>
+      </div>
+    </div> <!-- End Signup Logs Tab -->
+
   </main>
 
   <!-- Delete Confirmation Modal -->
@@ -421,7 +514,140 @@
     </div>
   </div>
 
-  <div id="toastContainer" class="toast-container"></div>
+  <div class="admin-tab-content" id="tab-securitylogs">
+    <header class="admin-header">
+      <h1>Security & Threat Intelligence</h1>
+      <p>Audit trail of intercepted privileged operations and real-time threat analysis.</p>
+    </header>
+
+    <!-- Dashboard Summary Cards -->
+    <div class="admin-grid" style="margin-bottom: 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+      <div class="glass-card stat-card" style="padding: 16px;">
+        <h4 style="color: var(--text-muted); font-size: 12px; text-transform: uppercase;">Total Blocked (24h)</h4>
+        <div id="secStatTotal" style="font-size: 28px; font-weight: 700; color: var(--text-main); margin-top: 8px;">0</div>
+      </div>
+      <div class="glass-card stat-card" style="padding: 16px;">
+        <h4 style="color: var(--text-muted); font-size: 12px; text-transform: uppercase;">Critical / High Events</h4>
+        <div id="secStatCritical" style="font-size: 28px; font-weight: 700; color: #e74c3c; margin-top: 8px;">0</div>
+      </div>
+      <div class="glass-card stat-card" style="padding: 16px;">
+        <h4 style="color: var(--text-muted); font-size: 12px; text-transform: uppercase;">Top Target Category</h4>
+        <div id="secStatCategory" style="font-size: 16px; font-weight: 600; color: var(--primary-color); margin-top: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">N/A</div>
+      </div>
+      <div class="glass-card stat-card" style="padding: 16px;">
+        <h4 style="color: var(--text-muted); font-size: 12px; text-transform: uppercase;">Top Offender</h4>
+        <div id="secStatOffender" style="font-size: 16px; font-weight: 600; color: var(--text-main); margin-top: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">N/A</div>
+      </div>
+    </div>
+
+    <div class="admin-controls-bar" style="flex-wrap: wrap;">
+      <div class="admin-search-wrapper" style="flex: 1; min-width: 250px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="securitySearch" class="admin-search-input" placeholder="Search by email, UID, or prompt...">
+      </div>
+      <div class="admin-filters">
+        <select id="securitySeverityFilter" class="admin-select" style="min-width: 140px;">
+          <option value="all">All Severities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <select id="securityThreatLevelFilter" class="admin-select" style="min-width: 140px;">
+          <option value="all">All Threat Levels</option>
+          <option value="critical">Critical (Suspended)</option>
+          <option value="high">High (Rate-Limited)</option>
+          <option value="medium">Medium (Warning)</option>
+          <option value="low">Low (Logged)</option>
+        </select>
+        <button id="refreshSecurityLogs" class="admin-secondary-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+
+    <section class="admin-table-container glass-card">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>User</th>
+            <th>Rolling Threat</th>
+            <th>Intent / Severity</th>
+            <th>Blocked By</th>
+            <th>Prompt (Count)</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="securityLogsTableBody">
+          <!-- Populated by JS -->
+        </tbody>
+      </table>
+      
+      <div class="admin-pagination">
+        <button id="prevSecurityPage" class="admin-page-btn" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          Prev
+        </button>
+        <span id="securityPageInfo" class="admin-page-info">Page 1</span>
+        <button id="nextSecurityPage" class="admin-page-btn" disabled>
+          Next
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Log Detail Modal -->
+  <div id="logDetailModal" class="modal" style="display: none;">
+    <div class="modal-box glass-card" style="max-width: 500px; text-align: left;">
+      <h3 style="margin-bottom: 16px; color: var(--text-color);">Signup Details</h3>
+      <div id="logDetailContent" style="font-size: 14px; line-height: 1.6; color: var(--text-muted); margin-bottom: 24px; max-height: 60vh; overflow-y: auto;">
+        <!-- Details populated by JS -->
+      </div>
+      <button id="closeLogModalBtn" class="secondary-btn w-100">Close</button>
+    </div>
+  </div>
+
+  <!-- Security Reset Modal -->
+  <div id="adminSecurityResetModal" class="modal" style="display: none;">
+    <div class="modal-box glass-card" style="max-width: 450px; text-align: left;">
+      <h3 style="margin-bottom: 8px; color: var(--text-color);">Reset Security Threat Score</h3>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">This will clear the user's rolling threat score and lift any active AI chat suspensions or rate limits.</p>
+      
+      <div style="margin-bottom: 12px;">
+        <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-muted);">Target User ID</label>
+        <input type="text" id="resetTargetUserId" class="admin-input" disabled style="width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.2);">
+      </div>
+      <div style="margin-bottom: 12px;">
+        <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-muted);">Target User Email</label>
+        <input type="text" id="resetTargetEmail" class="admin-input" disabled style="width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.2);">
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-muted);">Reason for Reset (Required)</label>
+        <input type="text" id="resetReasonInput" class="admin-input" placeholder="e.g. Cleared after manual review" style="width: 100%; box-sizing: border-box;">
+      </div>
+      
+      <div style="display: flex; gap: 8px;">
+        <button id="cancelResetBtn" class="secondary-btn w-100">Cancel</button>
+        <button id="confirmResetBtn" class="primary-btn w-100" style="background: #e74c3c; color: white;">Confirm Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Scripts -->
   <!-- Marked.js -->

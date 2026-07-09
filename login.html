@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  
+
   <title>Login | StudyMate AI</title>
-  <meta name="description" content="Sign in to StudyMate AI to access your personalized study assistant, resume your learning streak, and get smart revision notes." />
+  <meta name="description"
+    content="Sign in to StudyMate AI to access your personalized study assistant, resume your learning streak, and get smart revision notes." />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://aadirishi.in/login.html" />
 
@@ -14,7 +16,7 @@
   <meta property="og:title" content="Login to StudyMate AI" />
   <meta property="og:description" content="Sign in to access your personalized AI tutor." />
   <meta property="og:image" content="https://aadirishi.in/img/study-mate.png" />
-  
+
   <meta name="theme-color" content="#7C3AED" />
   <link rel="icon" type="image/png" href="img/study-mate.png" />
 
@@ -39,27 +41,28 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="preload" as="style" onload="this.onload=null;this.rel='stylesheet'" />
-  <noscript><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="preload"
+    as="style" onload="this.onload=null;this.rel='stylesheet'" />
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet" />
+  </noscript>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="skeleton.css" />
 </head>
-<body data-page="login" class="auth-page">
-  <header class="auth-header">
-    <img src="img/study-mate.png" class="auth-logo" alt="StudyMate Logo" />
-    <div class="auth-badge">StudyMate AI | Premium</div>
-  </header>
 
-  <section class="auth-content">
+<body data-page="login" class="auth-page">
     <div id="verifyModal" class="modal">
       <div class="modal-box glass-card">
         <h3 class="auth-title">Verify Your Email 📧</h3>
-        <p class="auth-subtitle">We've sent a link to your inbox. Please check your email (and spam folder) to activate your account.</p>
-        
+        <p class="auth-subtitle">We've sent a link to your inbox. Please check your email (and spam folder) to activate
+          your account.</p>
+
         <button id="resendVerifyBtn" class="primary-btn resend-btn">Resend Email</button>
         <p id="verifyStatus" class="verify-status"></p>
-        
-        <button id="closeVerifyModal" class="auth-switch" style="margin-top: 20px; border: none; background: none; cursor: pointer;">Return to Login</button>
+
+        <button id="closeVerifyModal" class="auth-switch"
+          style="margin-top: 20px; border: none; background: none; cursor: pointer;">Return to Login</button>
       </div>
     </div>
     <div id="forgotModal" class="modal">
@@ -67,14 +70,20 @@
         <button id="closeModal" class="close-btn" type="button" aria-label="Close modal">✕</button>
         <h3 class="auth-title">Reset Password</h3>
         <p class="auth-subtitle">Enter your email to receive a password reset link.</p>
-        
+
         <input type="email" id="resetEmail" placeholder="you@example.com" required />
         <button id="sendResetBtn" class="primary-btn" style="margin-top: 20px;">Send Reset Link</button>
         <p id="resetStatus" class="form-message" style="margin-top: 15px;"></p>
       </div>
     </div>
 
+    <header class="auth-card-brand" style="margin-bottom: 24px;">
+      <img src="img/study-mate.png" class="auth-logo" alt="StudyMate Logo" />
+      <div class="auth-badge">StudyMate AI | Premium</div>
+    </header>
+
     <main class="auth-card">
+
       <div class="auth-card-header">
         <h1 class="auth-title">Welcome Back</h1>
         <p class="auth-subtitle">Login to your personal study space.</p>
@@ -83,37 +92,42 @@
       <form id="loginForm" class="auth-form" novalidate>
         <input id="loginEmail" type="email" placeholder="Email Address" required />
         <input id="loginPassword" type="password" placeholder="Password" required />
-        
+
         <div style="text-align: right; margin: -8px 0 8px;">
-          <a id="forgotPasswordLink" class="auth-switch" href="javascript:void(0)" style="font-size: 13px;">Forgot Password?</a>
+          <a id="forgotPasswordLink" class="auth-switch" href="javascript:void(0)" style="font-size: 13px;">Forgot
+            Password?</a>
         </div>
 
         <button class="primary-btn" type="submit">Login</button>
       </form>
 
       <div class="auth-divider" style="margin: 12px 0;">
-        <span style="background: transparent; color: #64748b; font-size: 12px; font-weight: 600; letter-spacing: 1px;">OR</span>
+        <span
+          style="background: transparent; color: #64748b; font-size: 12px; font-weight: 600; letter-spacing: 1px;">OR</span>
       </div>
 
       <button id="googleLoginBtn" class="google-btn" type="button">
         <svg class="google-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.5 14.7 2.6 12 2.6 6.9 2.6 2.8 6.7 2.8 11.8S6.9 21 12 21c6.1 0 9.1-4.3 9.1-6.6 0-.4 0-.7-.1-1H12z"/>
-          <path fill="#34A853" d="M2.8 11.8c0 1.6.4 3.1 1.2 4.4l3.5-2.7c-.2-.5-.4-1.1-.4-1.7s.1-1.2.4-1.7L4 7.4c-.8 1.3-1.2 2.8-1.2 4.4z"/>
-          <path fill="#FBBC05" d="M12 21c2.7 0 4.9-.9 6.6-2.5l-3.2-2.5c-.9.6-2 .9-3.4.9-2.5 0-4.7-1.7-5.5-3.9L4 15.6C5.7 18.9 8.6 21 12 21z"/>
-          <path fill="#4285F4" d="M18.6 18.5c1.9-1.8 2.5-4.4 2.5-6.2 0-.6-.1-1.1-.2-1.6H12v3.9h5.5c-.3 1.1-.9 2.7-2.3 3.9l3.4 0z"/>
+          <path fill="#EA4335"
+            d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.5 14.7 2.6 12 2.6 6.9 2.6 2.8 6.7 2.8 11.8S6.9 21 12 21c6.1 0 9.1-4.3 9.1-6.6 0-.4 0-.7-.1-1H12z" />
+          <path fill="#34A853"
+            d="M2.8 11.8c0 1.6.4 3.1 1.2 4.4l3.5-2.7c-.2-.5-.4-1.1-.4-1.7s.1-1.2.4-1.7L4 7.4c-.8 1.3-1.2 2.8-1.2 4.4z" />
+          <path fill="#FBBC05"
+            d="M12 21c2.7 0 4.9-.9 6.6-2.5l-3.2-2.5c-.9.6-2 .9-3.4.9-2.5 0-4.7-1.7-5.5-3.9L4 15.6C5.7 18.9 8.6 21 12 21z" />
+          <path fill="#4285F4"
+            d="M18.6 18.5c1.9-1.8 2.5-4.4 2.5-6.2 0-.6-.1-1.1-.2-1.6H12v3.9h5.5c-.3 1.1-.9 2.7-2.3 3.9l3.4 0z" />
         </svg>
         <span>Continue with Google</span>
       </button>
+      <footer class="auth-card-footer">
+        <p id="authMessage" class="form-message"></p>
+        <p class="auth-switch">Don't have an account? <a href="signup.html">Create one</a></p>
+        <div class="auth-legal-links">
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="terms.html">Terms of Service</a>
+        </div>
+      </footer>
     </main>
-  </section>
-
-  <footer class="auth-footer">
-    <p id="authMessage" class="form-message" style="margin-bottom: 15px;"></p>
-    <p class="auth-switch">Don't have an account? <a href="signup.html">Create one</a></p>
-    <p class="auth-switch" style="margin-top: 12px; font-size: 13px; opacity: 0.8;">
-      <a href="privacy.html">Privacy Policy</a> | <a href="terms.html">Terms of Service</a>
-    </p>
-  </footer>
 
   <div id="confirmModal" class="modal confirm-modal" aria-hidden="true">
     <div class="modal-content glass-card confirm-content">
@@ -149,7 +163,7 @@
 
   <!-- Early Firebase Action Link Detection (runs before app.js loads) -->
   <script>
-    (function() {
+    (function () {
       var params = new URLSearchParams(window.location.search);
       var mode = params.get("mode");
       var oobCode = params.get("oobCode");
@@ -165,4 +179,5 @@
   </script>
   <script type="module" src="app.js"></script>
 </body>
+
 </html>

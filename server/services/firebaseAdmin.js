@@ -19,35 +19,23 @@ try {
   if (!Array.isArray(getApps) || getApps.length === 0) {
     const projectId = getProjectId();
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-    
-    const missingVars = [];
-    if (!projectId) missingVars.push('FIREBASE_PROJECT_ID');
-    if (!clientEmail) missingVars.push('FIREBASE_CLIENT_EMAIL');
-    if (!privateKey) missingVars.push('FIREBASE_PRIVATE_KEY');
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-    if (missingVars.length > 0) {
-      throw new Error(`Missing required Firebase environment variables: ${missingVars.join(', ')}`);
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.FIREBASE_CONFIG || process.env.FUNCTIONS_EMULATOR) {
+      app = admin.initializeApp();
+      console.log(`[Firebase Admin] Firebase initialized automatically via Cloud Environment`);
+    } else if (projectId && clientEmail && privateKey) {
+      const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+      const credential = cert({
+        projectId,
+        clientEmail,
+        privateKey: formattedPrivateKey
+      });
+      app = admin.initializeApp({ credential, projectId });
+      console.log(`[Firebase Admin] Firebase initialized via Environment Variables`);
+    } else {
+      throw new Error("Missing Firebase credentials (GOOGLE_APPLICATION_CREDENTIALS, FIREBASE_CONFIG, or Env Variables)");
     }
-
-    // Convert escaped newlines to actual newlines
-    privateKey = privateKey.replace(/\\n/g, '\n');
-    
-    const credential = cert({
-      projectId,
-      clientEmail,
-      privateKey
-    });
-    
-    const initOptions = {
-      credential,
-      projectId
-    };
-    
-    app = admin.initializeApp(initOptions);
-    console.log(`[Firebase Admin] Firebase initialized`);
-    console.log(`[Firebase Admin] Project ID: ${projectId}`);
-    console.log(`[Firebase Admin] Authentication ready`);
   } else {
     app = getApps[0];
   }

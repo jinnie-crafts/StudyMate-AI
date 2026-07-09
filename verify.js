@@ -1,9 +1,12 @@
-import { auth } from "./firebase.js";
-import { onAuthStateChanged, signOut, applyActionCode } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { auth, db } from "./firebase.js";
+import { onAuthStateChanged, signOut, applyActionCode, sendEmailVerification } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { doc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const statusText = document.querySelector(".status-text");
 const subText = document.querySelector(".sub-text");
 const manualBtn = document.getElementById("manualCheckBtn");
+const resendBtn = document.getElementById("resendEmailBtn");
+const logoutBtn = document.getElementById("logoutBtn");
 
 // ---------------------------------------------------------------------------
 // Handle Automatic Verification from Email Link
@@ -34,6 +37,11 @@ if (oobCode) {
 // ---------------------------------------------------------------------------
 onAuthStateChanged(auth, async (user) => {
   if (!user) {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("oobCode")) {
+      // Do not redirect; let the applyActionCode handler above process the verification
+      return;
+    }
     window.location.replace("login.html");
     return;
   }
@@ -78,9 +86,89 @@ onAuthStateChanged(auth, async (user) => {
       }
     };
   }
+
+  // Logout button
+  if (logoutBtn) {
+    logoutBtn.style.display = "inline-block";
+    logoutBtn.onclick = async () => {
+      await signOut(auth);
+      window.location.replace("login.html");
+    };
+  }
+
+  // Resend Verification Email button
+  if (resendBtn) {
+    resendBtn.style.display = "inline-block";
+
+    const startCooldownTimer = (seconds) => {
+      resendBtn.disabled = true;
+      let left = seconds;
+      resendBtn.textContent = `Resend available in ${left}s`;
+      
+      const timer = setInterval(() => {
+        left--;
+        resendBtn.textContent = `Resend available in ${left}s`;
+        if (left <= 0) {
+          clearInterval(timer);
+          resendBtn.disabled = false;
+          resendBtn.textContent = "Resend Email";
+          localStorage.removeItem("lastResendTimestamp");
+        }
+      }, 1000);
+    };
+
+    const checkCooldown = () => {
+      const lastSent = localStorage.getItem("lastResendTimestamp");
+      if (lastSent) {
+        const elapsed = Math.floor((Date.now() - parseInt(lastSent)) / 1000);
+        if (elapsed < 60) {
+          startCooldownTimer(60 - elapsed);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (!checkCooldown()) {
+      resendBtn.onclick = async () => {
+        try {
+          resendBtn.disabled = true;
+          resendBtn.textContent = "Sending...";
+          await sendEmailVerification(auth.currentUser, { url: window.location.origin });
+          console.info("[AUTH] Verification email resent");
+          localStorage.setItem("lastResendTimestamp", Date.now());
+          startCooldownTimer(60);
+          statusText.textContent = "New verification link sent!";
+          statusText.style.color = "#2ecc71";
+          setTimeout(() => {
+             statusText.textContent = "Checking Verification...";
+             statusText.style.color = "";
+          }, 3000);
+        } catch (err) {
+          console.error("[AUTH] Failed to resend:", err);
+          resendBtn.disabled = false;
+          resendBtn.textContent = "Resend Email";
+          statusText.textContent = "Failed to resend.";
+          statusText.style.color = "#ef4444";
+        }
+      };
+    }
+  }
 });
 
-function showVerifySuccess() {
+async function showVerifySuccess() {
+  if (auth.currentUser) {
+    try {
+      await updateDoc(doc(db, "users", auth.currentUser.uid), {
+        emailVerified: true,
+        verifiedAt: serverTimestamp(),
+        lastVerificationCheck: serverTimestamp()
+      });
+      console.info("[AUTH] Firestore updated: emailVerified = true");
+    } catch (err) {
+      console.error("[AUTH] Failed to sync verification to Firestore:", err);
+    }
+  }
   document.body.innerHTML = `
     <div class="success-container">
       <div class="success-card">

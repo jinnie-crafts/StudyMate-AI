@@ -209,7 +209,7 @@
             </div>
 
             <div class="sidebar-version">
-              <span id="appVersionDisplay">v1.2</span>
+            <span id="appVersionDisplay">v1.3.0</span>
               <span class="version-status">Stable</span>
             </div>
 
@@ -475,6 +475,30 @@
         <button id="guestLaterBtn" class="ghost-btn" type="button">Maybe Later</button>
         <button id="guestLoginBtn" class="ghost-btn" type="button">Login</button>
         <button id="guestSignupBtn" class="primary-btn" type="button">Sign Up</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="termsConsentModal" class="modal modal-overlay" aria-hidden="true" style="backdrop-filter: blur(8px); pointer-events: auto;">
+    <div class="modal-content glass-card confirm-content" style="max-width: 500px; text-align: left; pointer-events: auto;">
+      <h3 style="margin-bottom: 16px;">Update to Terms & Privacy Policy</h3>
+      <p style="margin-bottom: 16px; color: var(--text-soft); font-size: 14px;">We've updated our policies. To continue using StudyMate AI, please review and accept our latest Privacy Policy and Terms of Service.</p>
+      
+      <div style="margin-bottom: 24px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 13px;">
+        <ul style="margin: 0; padding-left: 20px; color: var(--text-muted);">
+          <li><a href="privacy.html" target="_blank" style="color: var(--accent-main); text-decoration: underline;">Privacy Policy</a></li>
+          <li style="margin-top: 8px;"><a href="terms.html" target="_blank" style="color: var(--accent-main); text-decoration: underline;">Terms of Service</a></li>
+        </ul>
+      </div>
+
+      <label class="checkbox-container" style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 24px; cursor: pointer;">
+        <input type="checkbox" id="termsConsentCheckbox" style="margin-top: 4px; width: 18px; height: 18px;">
+        <span style="font-size: 14px; color: var(--text-main); line-height: 1.5;">I have read and agree to the latest Privacy Policy and Terms of Service.</span>
+      </label>
+
+      <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 12px;">
+        <button id="termsConsentLogoutBtn" class="ghost-btn" type="button">Logout</button>
+        <button id="termsConsentAcceptBtn" class="primary-btn" type="button" disabled style="opacity: 0.5;">Accept & Continue</button>
       </div>
     </div>
   </div>

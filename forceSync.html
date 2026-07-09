@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head><title>Force Sync</title></head>
+<body>
+  <h1>Force Syncing Users</h1>
+  <p id="status">Working...</p>
+  <script type="module">
+    import { db } from './firebase.js';
+    import { collection, getDocs, deleteDoc } from 'https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js';
+    
+    async function forceSyncUsers() {
+      try {
+        const snap = await getDocs(collection(db, "users"));
+        const emailMap = {};
+        snap.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.email) {
+            if (!emailMap[data.email]) emailMap[data.email] = [];
+            emailMap[data.email].push({ id: doc.id, ...data, ref: doc.ref });
+          }
+        });
+        
+        let deletedCount = 0;
+        for (const [email, docs] of Object.entries(emailMap)) {
+          if (docs.length > 1) {
+            docs.sort((a, b) => {
+              const aTime = a.createdAt?.seconds || 0;
+              const bTime = b.createdAt?.seconds || 0;
+              return bTime - aTime;
+            });
+            for (let i = 1; i < docs.length; i++) {
+              await deleteDoc(docs[i].ref);
+              deletedCount++;
+            }
+          }
+        }
+        document.getElementById("status").innerText = "Force sync complete. Removed " + deletedCount + " duplicate entries.";
+      } catch(e) {
+        document.getElementById("status").innerText = "Error: " + e.message;
+      }
+    }
+    forceSyncUsers();
+  </script>
+</body>
+</html>

@@ -8,16 +8,25 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const fs = require("fs");
+const path = require("path");
+const { loggers } = require("./services/logger");
+const log = loggers.server;
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const AgentRunner = require("./agents");
 const ragRunner = require("./rag/ragRunner");  // RAG Pipeline Integration
 const memoryRunner = require("./memory/memoryRunner"); // Memory System Integration
 const kbRoutes = require("./routes/kb"); // Knowledge Base Admin API
+const { checkSecurity } = require("./services/security"); // Pre-LLM Security Guardrail
+const { requireAuth } = require("./services/authMiddleware"); // Firebase Auth Middleware
 
 if (!process.env.OPENROUTER_API_KEY) {
-  console.error("❌ CRITICAL: Missing OPENROUTER_API_KEY in environment.");
+  log.fatal("CRITICAL: Missing OPENROUTER_API_KEY in environment.");
 }
 
 const REALTIME_QUERY_REGEX = /(today|now|latest|news|current|recent|weather|price|score|stock|time)/i;
@@ -52,10 +61,10 @@ const COOLDOWN_MS = 5 * 60 * 1000;
 
 let lastIdentityIndex = -1;
 const IDENTITY_RESPONSES = [
-  "StudyMate-AI is developed by Rishu Maurya and Komal Sharma.",
-  "This application is created by Rishu Maurya and Komal Sharma.",
-  "Rishu Maurya and Komal Sharma are the developers of StudyMate-AI.",
-  "StudyMate-AI is built by Rishu Maurya and Komal Sharma."
+  "StudyMate-AI is developed by Harsh Maurya and Komal Sharma.",
+  "This application is created by Harsh Maurya and Komal Sharma.",
+  "Harsh Maurya and Komal Sharma are the developers of StudyMate-AI.",
+  "StudyMate-AI is built by Harsh Maurya and Komal Sharma."
 ];
 const REALTIME_CACHE_TTL_MS = 5 * 60 * 1000;
 const IDENTITY_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -70,19 +79,21 @@ const MAX_CACHE_SIZE = 500;
 // Prompt Templates
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Prompt Templates — loaded from server-side files (VULN-11)
+// ---------------------------------------------------------------------------
+
+function loadPromptFile(filename) {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'prompts', filename), 'utf-8').trim();
+  } catch (err) {
+    log.error({ err, filename }, 'Failed to load prompt file');
+    return '';
+  }
+}
+
 const PROMPT_TEMPLATES = {
-  CHAT: `
-[System: You are StudyMate-AI, a AI developed by Rishu Maurya and Komal Sharma. Use Markdown for formatting.]
-[Role: Professional Tutor]
-[Guidelines:
- - If Intent is DIAGRAM: Start with the Mermaid block ( \`\`\`mermaid ). Follow with a brief 1-2 line explanation.
- - If Intent is CODING: Provide full, usable code first ( \`\`\`language ). Follow with key points. No generic definitions.
- - If Intent is EXPLANATION: Use structure: **Definition:** (substantial), **Key Points:** (bulleted), **Example:** (simple).
- - If Intent is GENERAL: Answer directly and clearly. No fluff.
- - Use exactly ONE natural, contextual follow-up question at the end for all intents.
-]
-[Goal: High-quality, polished educational response. Do not truncate useful code.]
-`,
+  CHAT: loadPromptFile('chat.md'),
   QUIZ_GEN: `[Role:QuizMaster][Task:1MCQ][Format:Q: | A) | B) | C) | D)] Based on topic.`,
   QUIZ_EVAL: `[Task:EvalAns][Rule:IfOk:Correct!+NextQ.Else:Explain+Retry][Limit:4Lines]`
 };
@@ -94,19 +105,121 @@ Only return the final structured answer.
 `;
 
 // ---------------------------------------------------------------------------
-// Middleware
+// Middleware — Security Hardening
 // ---------------------------------------------------------------------------
 
-app.use(cors());
+// 1. Security Headers (VULN-07)
+app.use(helmet({
+  contentSecurityPolicy: false,       // CSP managed separately for frontend
+  crossOriginEmbedderPolicy: false,   // Allow external resources
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true }
+}));
+
+// 2. CORS — Environment-based allowlist (VULN-03)
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+if (ALLOWED_ORIGINS.length === 0) {
+  log.warn('ALLOWED_ORIGINS is not set. CORS will reject all cross-origin requests in production.');
+}
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server (no origin) and allowed origins
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      log.warn({ origin }, 'CORS blocked request from unauthorized origin');
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
+// 3. Body parser with size limits
 app.use(express.json({ limit: "100kb" }));
 
-app.use("/api/kb", kbRoutes);
+// 4. Rate Limiting (VULN-06)
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 30,              // 30 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down.' }
+});
 
-// ---------------------------------------------------------------------------
-// Health check
-// ---------------------------------------------------------------------------
+const kbLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many KB requests. Please slow down.' }
+});
 
-const path = require("path");
+const adminLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many admin requests. Please slow down.' }
+});
+
+// 5. Apply rate limiters and auth middleware to routes
+const { verifyAdmin: kbVerifyAdmin } = require('./services/authMiddleware');
+app.use("/api/kb", kbLimiter, kbVerifyAdmin, kbRoutes);
+app.use("/api/admin", adminLimiter, require("./routes/admin"));
+
+// 6. Safe Static file serving — Whitelist allowed files and directories (VULN-05)
+// Under no circumstances should backend files, environment files, logs, or source code be accessible.
+const ALLOWED_STATIC_FILES = new Set([
+  'index.html', 'login.html', 'signup.html', 'verify.html', 'settings.html', 'admin.html',
+  'privacy.html', 'terms.html', 'recover.html', 'reset.html', '404.html',
+  'manifest.json', 'site.webmanifest', 'robots.txt', 'humans.txt', 'ads.txt',
+  'sitemap.xml', 'feed.xml', 'rss.xml', 'browserconfig.xml',
+  'app.js', 'admin.js', 'verify.js', 'recover.js', 'reset.js', '404.js',
+  'style.css', 'skeleton.css', 'admin.css', 'notification.css',
+  'notificationBell.js', 'disposableEmailValidator.js', 'adminSecurityLogs.js', 'adminSignupLogs.js',
+  'faq.json', 'features.json', 'knowledge.json', 'firebase.js'
+]);
+
+const ALLOWED_STATIC_DIRS = ['img', 'config', '.well-known'];
+
+app.use((req, res, next) => {
+  // Normalize path to prevent path traversal
+  const safePath = path.normalize(req.path).replace(/^(\.\.[\/\\])+/, '');
+  const baseName = path.basename(safePath);
+  
+  // Extract the top-level directory name
+  const pathParts = safePath.split(/[/\\]/).filter(Boolean);
+  const dirName = pathParts[0];
+
+  // If requesting API routes, bypass static check
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+
+  // Allow root path '/'
+  if (req.path === '/' || req.path === '/index.html') {
+    return next();
+  }
+
+  // Check if file is whitelisted
+  if (ALLOWED_STATIC_FILES.has(baseName)) {
+    return next();
+  }
+
+  // Check if directory is whitelisted
+  if (dirName && ALLOWED_STATIC_DIRS.includes(dirName)) {
+    return next();
+  }
+
+  // Deny anything else
+  log.warn({ path: req.path }, 'Blocked unauthorized static file access attempt');
+  res.status(403).send('Forbidden');
+});
+
 app.use(express.static(path.join(__dirname, "../")));
 
 app.get("/api/health", (_req, res) => {
@@ -128,25 +241,50 @@ const MODEL_FALLBACKS = [
 
 const MODEL_TIMEOUT_MS = 25000;
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
   const start = Date.now();
   try {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-      console.error("[Configuration Error] OPENROUTER_API_KEY is missing from environment.");
+      log.fatal("OPENROUTER_API_KEY is missing from environment.");
       return res.status(500).json({ error: "AI Service is not configured. Please check server logs." });
     }
 
+    // userId is now ALWAYS derived from verified Firebase token (VULN-08/10)
     const { messages, mode, hinglish, notesMode, userId, doubt = false, currentQuestion = null, userMemory = [] } = req.body;
-    if (userId) console.log(`[AI Request] User: ${userId} | Mode: ${mode || "General"} | Messages: ${Array.isArray(messages) ? messages.length : 'NOT_ARRAY'}`);
+    log.info({ userId, mode: mode || 'General', msgCount: Array.isArray(messages) ? messages.length : 0 }, 'AI request received');
 
     if (!Array.isArray(messages) || messages.length === 0) {
-      console.warn("[Validation Error] No messages or invalid format:", JSON.stringify(req.body, null, 2));
       return res.status(400).json({ error: "No messages provided." });
+    }
+
+    // Message validation — prevent resource exhaustion (VULN-26)
+    const MAX_MESSAGES = 30;
+    const MAX_MSG_LENGTH = 10000;
+    if (messages.length > MAX_MESSAGES) {
+      return res.status(400).json({ error: `Too many messages. Maximum ${MAX_MESSAGES} allowed.` });
+    }
+    for (const msg of messages) {
+      if (typeof msg.content === 'string' && msg.content.length > MAX_MSG_LENGTH) {
+        return res.status(400).json({ error: `Message too long. Maximum ${MAX_MSG_LENGTH} characters per message.` });
+      }
     }
 
     const latestUserMessage = getLatestUserMessage(messages);
     const context = { req, res, userId, mode, doubt, currentQuestion, messages, userMemory };
+
+    // 0. Security Guardrail (CRITICAL — Intercepts malicious administrative prompts)
+    const securityResult = await checkSecurity(req, latestUserMessage);
+    if (securityResult.blocked) {
+      return res.json({
+        text: securityResult.refusal,
+        reply: securityResult.refusal,
+        intent: "security_refusal",
+        sources: [],
+        model_used: "SecurityAgent",
+        cached: false
+      });
+    }
 
     // 1. Identity check (CRITICAL — Hardcoded, bypassing AI)
     if (isIdentityQueryMatch(latestUserMessage)) {
@@ -179,7 +317,7 @@ app.post("/api/chat", async (req, res) => {
     // 6. Check cache (with bypass logic)
     // --- RAG Integration: Use classifier to determine if retrieval is needed ---
     const ragResult = await ragRunner.execute(latestUserMessage, userId);
-    
+
     // RULE 3: Intercept Missing Knowledge for StudyMate
     if (ragResult.missingKnowledge) {
       return res.json({
@@ -235,7 +373,7 @@ app.post("/api/chat", async (req, res) => {
     const autoQuestionEnabled = req.body.autoQuestion !== false;
     // --- RAG FIX: Inject formatted context into system prompt (was missing before) ---
     const ragContext = ragResult.promptContext || "";
-    
+
     // --- MEMORY INTEGRATION ---
     const memoryContext = memoryRunner.retrieveContext(latestUserMessage, userMemory);
 
@@ -339,7 +477,7 @@ app.post("/api/chat", async (req, res) => {
                     fullText += content;
                     res.write(`data: ${JSON.stringify({ content })}\n\n`);
                   }
-                } catch (e) {}
+                } catch (e) { }
               }
             }
           }
@@ -385,7 +523,7 @@ app.post("/api/chat", async (req, res) => {
       try {
         console.log(`[Zero-Failure] Attempting: ${model}`);
         const responseData = await callAIModel(apiKey, model, finalMessages);
-        
+
         if (isValidAIResponse(responseData)) {
           aiResponse = responseData;
           modelUsed = model;
@@ -419,19 +557,18 @@ app.post("/api/chat", async (req, res) => {
     return res.json(finalResult);
 
   } catch (error) {
-    console.log("Response time (error):", Date.now() - start, "ms");
-    console.error("POST /api/chat error:", error);
+    log.error({ err: error, responseTimeMs: Date.now() - start }, 'POST /api/chat error');
     return res.status(500).json({ error: "Internal server error." });
   }
 });
 
 function getSafeFallbackReply(query, intent) {
   const base = "I'm currently optimizing my specialized learning modules. In the meantime, here is a general overview:";
-  
+
   if (intent === "CODING") {
     return `${base}\n\nTo help with your coding request, please ensure your syntax is correct. I am syncing my developer tools and will be able to provide deep code analysis in a moment. What specific language or error are you working with?`;
   }
-  
+
   if (intent === "DIAGRAM") {
     return `${base}\n\nI am refreshing my visual engine to generate a clear diagram for you. Please try asking for the specific structure or flow again in a minute.`;
   }
@@ -455,10 +592,10 @@ function buildModelCandidates(selectedModel) {
 function isValidAIResponse(text) {
   if (!text || typeof text !== "string") return false;
   const t = text.trim();
-  
+
   // 1. Minimum length validation
   if (t.length < 20) return false;
-  
+
   // 2. Refusal phrase detection
   const refusalPhrases = [
     "i am an ai model",
@@ -597,8 +734,9 @@ function quickIdentityCheck(message) {
 }
 
 async function isIdentityQuery(apiKey, userMessage) {
-  const prompt = `
-You are an intent classifier.
+  // Sanitize user input — prevent prompt injection (VULN-13)
+  const sanitizedMessage = JSON.stringify(String(userMessage || "").slice(0, 1000));
+  const prompt = `You are an intent classifier.
 
 Return ONLY "YES" or "NO".
 
@@ -622,7 +760,7 @@ Examples:
 - who is elon musk -> NO
 
 Message:
-"${String(userMessage || "").slice(0, 1000)}"
+${sanitizedMessage}
 `;
 
   try {
@@ -699,9 +837,9 @@ async function callAIModel(apiKey, model, messages) {
 
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content;
-    
+
     if (!content) throw new Error("Empty response from provider.");
-    
+
     return String(content);
   } catch (error) {
     if (error.name === "AbortError") {
@@ -997,5 +1135,5 @@ async function fetchNewsData(query) {
 // ---------------------------------------------------------------------------
 
 app.listen(PORT, () => {
-  console.log(`StudyMate AI Backend running on http://localhost:${PORT}`);
+  log.info({ port: PORT }, `StudyMate AI Backend running on http://localhost:${PORT}`);
 });

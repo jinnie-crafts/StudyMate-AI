@@ -54,7 +54,11 @@
   <h1 class="status-text">Checking Verification...</h1>
   <p class="sub-text">Once you click the link in your email, we'll automatically redirect you to your dashboard.</p>
   
-  <button id="manualCheckBtn" class="primary-btn" style="margin-top: 30px; display: none;">I have verified</button>
+  <div style="display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; justify-content: center;">
+    <button id="manualCheckBtn" class="primary-btn" style="display: none;">I have verified</button>
+    <button id="resendEmailBtn" class="ghost-btn" style="display: none; border: 1px solid rgba(255,255,255,0.2);">Resend Email</button>
+    <button id="logoutBtn" class="ghost-btn" style="display: none; color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">Logout</button>
+  </div>
 
   <footer class="auth-footer" style="margin-top: 40px; text-align: center;">
     <p class="auth-switch" style="font-size: 13px; opacity: 0.8;">
