@@ -108,40 +108,56 @@ Only return the final structured answer.
 // Middleware — Security Hardening
 // ---------------------------------------------------------------------------
 
-// 1. Security Headers (VULN-07)
+// 1. Request Logging (Must execute first)
+app.use((req, res, next) => {
+  if (req.path !== '/api/health') {
+    log.info({ method: req.method, url: req.url, ip: req.ip }, `Request received: ${req.method} ${req.url}`);
+  }
+  next();
+});
+
+// 2. CORS — Load allowed origins from config and set credentials to false
+const { allowedOrigins } = require("./config/corsConfig");
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server / same-origin requests (no origin) and allowed origins
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, false); // Reject unauthorized origins cleanly without throwing server error
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: false,
+  optionsSuccessStatus: 204
+}));
+
+// CORS Origin Validation Middleware for non-preflight requests
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (req.method !== 'OPTIONS' && origin && !allowedOrigins.includes(origin)) {
+    log.warn({ origin, url: req.url }, 'CORS blocked request from unauthorized origin');
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: `Origin '${origin}' is not allowed by CORS configuration.`
+    });
+  }
+  next();
+});
+
+// 3. Security Headers — Helmet (VULN-07)
 app.use(helmet({
   contentSecurityPolicy: false,       // CSP managed separately for frontend
   crossOriginEmbedderPolicy: false,   // Allow external resources
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true }
 }));
 
-// 2. CORS — Environment-based allowlist (VULN-03)
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
-
-if (ALLOWED_ORIGINS.length === 0) {
-  log.warn('ALLOWED_ORIGINS is not set. CORS will reject all cross-origin requests in production.');
-}
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow server-to-server (no origin) and allowed origins
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-      callback(null, true);
-    } else {
-      log.warn({ origin }, 'CORS blocked request from unauthorized origin');
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
-
-// 3. Body parser with size limits
+// 4. Body parser with size limits
 app.use(express.json({ limit: "100kb" }));
 
-// 4. Rate Limiting (VULN-06)
+// 5. Rate Limiting (VULN-06)
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,  // 1 minute
   max: 30,              // 30 requests per minute per IP
@@ -166,12 +182,12 @@ const adminLimiter = rateLimit({
   message: { error: 'Too many admin requests. Please slow down.' }
 });
 
-// 5. Apply rate limiters and auth middleware to routes
+// 6. Apply rate limiters and auth middleware to routes
 const { verifyAdmin: kbVerifyAdmin } = require('./services/authMiddleware');
 app.use("/api/kb", kbLimiter, kbVerifyAdmin, kbRoutes);
 app.use("/api/admin", adminLimiter, require("./routes/admin"));
 
-// 6. Safe Static file serving — Whitelist allowed files and directories (VULN-05)
+// 7. Safe Static file serving — Whitelist allowed files and directories (VULN-05)
 // Under no circumstances should backend files, environment files, logs, or source code be accessible.
 const ALLOWED_STATIC_FILES = new Set([
   'index.html', 'login.html', 'signup.html', 'verify.html', 'settings.html', 'admin.html',
