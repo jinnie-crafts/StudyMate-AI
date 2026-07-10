@@ -7,9 +7,9 @@ const { admin, db, FieldValue } = require("./firebaseAdmin");
  *
  * Region: asia-south1 (Mumbai). Must match the frontend getFunctions() region.
  */
-exports.sendNotification = functions
-  .region("asia-south1")
-  .https.onCall(async (data, context) => {
+exports.sendNotification = functions.https.onCall({ region: "asia-south1" }, async (request) => {
+  const data = request.data;
+  const context = request;
   functions.logger.info("sendNotification invoked. Incoming data:", JSON.stringify(data));
 
   // ── Admin Claim Verification (with detailed logging) ──
