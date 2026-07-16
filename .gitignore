@@ -1,7 +1,10 @@
 # --- Dependencies ---
 node_modules/
 jspm_packages/
+bower_components/
 .npm/
+.yarn/
+.pnp.*
 
 # --- Environment and Secrets ---
 .env
@@ -21,6 +24,7 @@ client_secret.json
 serviceAccountKey.json
 **/serviceAccountKey.json
 **/serviceAccount*.json
+.runtimeconfig.json
 
 # --- Logs and Debugging ---
 logs/
@@ -39,6 +43,13 @@ storage-debug.log
 auth-debug.log
 emulator-debug.log
 ui-debug.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# --- Process IDs ---
+pids
+*.pid
+*.seed
+*.pid.lock
 
 # --- Build and Dist ---
 dist/
@@ -49,6 +60,16 @@ out/
 .nuxt/
 .cache/
 .parcel-cache/
+.vuepress/dist
+.serverless/
+*.tsbuildinfo
+*.tgz
+
+# --- Testing and Coverage ---
+coverage/
+.nyc_output/
+*.lcov
+lib-cov/
 
 # --- IDE and Editor files ---
 .vscode/
@@ -65,6 +86,11 @@ out/
 .settings/
 *.sublime-workspace
 
+# --- Caches ---
+.eslintcache
+.stylelintcache
+.node_repl_history
+
 # --- OS files ---
 .DS_Store
 .DS_Store?
@@ -75,12 +101,10 @@ ehthumbs.db
 Thumbs.db
 Desktop.ini
 
-# --- Testing ---
-coverage/
-.nyc_output/
-
 # --- Firebase specific ---
 .firebase/
+firebase-export/
+emulator-data/
 # Note: Keep .firebaserc and firebase.json in git unless you have specific reasons not to
 
 # --- AI and Helper artifacts ---
@@ -95,3 +119,4 @@ tmp/
 temp/
 graphify-out/
 server/knowledge/
+
