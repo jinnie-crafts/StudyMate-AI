@@ -2,7 +2,7 @@
   "name": "StudyMate AI",
   "short_name": "StudyMate",
   "description": "Your personal AI-powered study assistant for UPSC, JEE, NEET and more.",
-  "start_url": "/index.html",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#0F172A",
   "theme_color": "#7C3AED",

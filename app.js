@@ -349,7 +349,7 @@ function initLoginPage() {
 
       await ensureUserDocument(updatedUser);
       queueFlashToast("Logged in successfully.", "success");
-      window.location.replace("index.html");
+      window.location.replace("/");
     } catch (err) {
       console.error("Login error:", err);
       setFormMessage(authMessage, "Invalid email or password.", "error");
@@ -520,7 +520,7 @@ function initSignupPage() {
         setFormMessage(authMessage, "Verification email sent. Redirecting to verification page...", "success");
 
         // Do not sign out! The onAuthStateChanged listener will automatically 
-        // trigger runAuthGuard which redirects unverified users to verify.html.
+        // trigger runAuthGuard which redirects unverified users to /verify.
         
         // Trigger modal is no longer needed since we redirect to a dedicated page
         // showVerificationModal(user);
@@ -634,7 +634,7 @@ async function loginWithGoogle() {
 
     await ensureUserDocument(result.user, isNewUser, "google");
     queueFlashToast("Signed in with Google.", "success");
-    window.location.replace("index.html");
+    window.location.replace("/");
   } catch (err) { console.error("Google login error:", err); showToast(err.message, "error"); }
 }
 
@@ -714,10 +714,7 @@ async function ensureUserDocument(user, isNewUser = false, authProvider = null) 
         profilePatch.hasSeenWelcome = hasSeenWelcome;
       }
 
-      // Legacy user handling
-      if (data.agreementAccepted === undefined) {
-        profilePatch.agreementAccepted = null;
-      }
+
 
       await setDoc(userRef, profilePatch, { merge: true });
       return { ...data, ...profilePatch };
@@ -1004,7 +1001,7 @@ function bindOnboardingStartButton() {
 function shouldSkipOnboardingModal() {
   if (page !== "dashboard") return true;
   const path = window.location.pathname.toLowerCase();
-  return path.includes("login.html");
+  return path.includes("/login");
 }
 
 function getWelcomeSeenStorageKey(uid = "") {
@@ -1670,7 +1667,7 @@ async function processAccountDeletion() {
     console.info(`[ACCOUNT] Successfully deleted Firebase Auth for UID: ${state.currentUser.uid}`);
 
     await signOut(auth);
-    window.location.replace("login.html");
+    window.location.replace("/login");
   } catch (err) {
     console.error("Delete error:", err);
     showToast("Error during deletion: " + err.message, "error");
@@ -1737,8 +1734,8 @@ function bindDashboardEvents() {
 
   ui.menuToggleBtn.addEventListener("click", toggleSidebar);
   ui.sidebarOverlay.addEventListener("click", closeSidebar);
-  if (ui.guestLoginBtn) ui.guestLoginBtn.addEventListener("click", () => window.location.assign("login.html"));
-  if (ui.guestSignupBtn) ui.guestSignupBtn.addEventListener("click", () => window.location.assign("signup.html"));
+  if (ui.guestLoginBtn) ui.guestLoginBtn.addEventListener("click", () => window.location.assign("/login"));
+  if (ui.guestSignupBtn) ui.guestSignupBtn.addEventListener("click", () => window.location.assign("/signup"));
   if (ui.guestLaterBtn) ui.guestLaterBtn.addEventListener("click", closeGuestLimitModal);
   if (ui.guestLimitModal) {
     ui.guestLimitModal.addEventListener("click", (e) => {
@@ -1776,7 +1773,7 @@ async function confirmLogoutAll() {
 
 async function handleLogout() {
   if (state.isGuestMode) {
-    window.location.replace("login.html");
+    window.location.replace("/login");
     return;
   }
   try {
@@ -1791,7 +1788,7 @@ async function handleLogout() {
     history.replaceState(null, "", "/"); // Route cleanup on logout
     await signOut(auth);
     queueFlashToast("Logged out successfully.", "success");
-    window.location.replace("login.html");
+    window.location.replace("/login");
   } catch (err) {
     console.error("Logout error:", err);
     showToast(err.message, "error");
@@ -2779,7 +2776,7 @@ function closeNotesDropdown() { ui.notesDropdown.classList.remove("open"); ui.no
 // Navigation / settings
 // ---------------------------------------------------------------------------
 
-function goToSettings() { window.location.href = "settings.html"; }
+function goToSettings() { window.location.href = "/settings"; }
 
 // ---------------------------------------------------------------------------
 // Theme system (4 themes)
@@ -3562,7 +3559,7 @@ function setupSessionRevocationListener(uid, sessionId) {
       localStorage.removeItem(STORAGE_KEYS.deviceSessionId);
       cleanupDeviceSession();
       signOut(auth).then(() => {
-        window.location.replace("login.html?revoked=true");
+        window.location.replace("/login?revoked=true");
       });
     }
   });
@@ -3765,7 +3762,7 @@ async function runAuthGuard(user) {
   if (!userDocData) {
      console.error("[AUTH GUARD] User doc missing or could not be fetched.");
      await signOut(auth);
-     if (currentPage !== "login") window.location.replace("login.html");
+     if (currentPage !== "login") window.location.replace("/login");
      return false;
   }
 
@@ -3773,13 +3770,13 @@ async function runAuthGuard(user) {
   if (userDocData.deleted || userDocData.accountStatus === "deleted") {
      console.warn("[AUTH GUARD] Account is deleted.");
      await signOut(auth);
-     if (currentPage !== "login") window.location.replace("login.html");
+     if (currentPage !== "login") window.location.replace("/login");
      return false;
   }
   if (userDocData.isBlocked) {
      console.warn("[AUTH GUARD] Account is blocked.");
      await signOut(auth);
-     if (currentPage !== "login") window.location.replace("login.html");
+     if (currentPage !== "login") window.location.replace("/login");
      return false;
   }
 
@@ -3790,12 +3787,12 @@ async function runAuthGuard(user) {
   if (needsVerification) {
      console.warn("[AUTH GUARD] User email not verified. Blocking access.");
      if (!isVerifyPage) {
-        window.location.replace("verify.html");
+        window.location.replace("/verify");
      }
      return false; 
   } else if (isVerifyPage) {
      console.info("[AUTH GUARD] User is verified. Redirecting from verify page to home.");
-     window.location.replace("index.html");
+     window.location.replace("/");
      return false;
   }
 
@@ -3811,7 +3808,7 @@ async function runAuthGuard(user) {
     if (!accepted) {
       console.warn("[AUTH GUARD] User refused terms.");
       await signOut(auth);
-      window.location.replace("login.html");
+      window.location.replace("/login");
       return false;
     }
   }
@@ -3880,7 +3877,7 @@ async function initAuth() {
 
       if (!user) {
         if (isProtectedPage) {
-          window.location.replace("login.html");
+          window.location.replace("/login");
           return;
         }
         resolve(null);
@@ -3910,7 +3907,7 @@ async function initAuth() {
 
       // User is fully authenticated, verified, and accepted terms
       if (isAuthPage) {
-        window.location.replace("index.html");
+        window.location.replace("/");
         return;
       }
 
@@ -4012,19 +4009,19 @@ async function bootstrap() {
       console.log("[AUTH ACTION] oobCode present:", !!actionOobCode);
 
       const currentPath = window.location.pathname.toLowerCase();
-      const isAlreadyOnHandler = currentPath.includes("reset.html")
-        || currentPath.includes("verify.html")
-        || currentPath.includes("recover.html");
+      const isAlreadyOnHandler = currentPath.includes("/reset")
+        || currentPath.includes("/verify")
+        || currentPath.includes("/recover");
 
       if (!isAlreadyOnHandler) {
         let targetPage = null;
 
         if (actionMode === "resetPassword") {
-          targetPage = "reset.html";
+          targetPage = "/reset";
         } else if (actionMode === "verifyEmail") {
-          targetPage = "verify.html";
+          targetPage = "/verify";
         } else if (actionMode === "recoverEmail") {
-          targetPage = "recover.html";
+          targetPage = "/recover";
         }
 
         if (targetPage) {

@@ -42,7 +42,7 @@ onAuthStateChanged(auth, async (user) => {
       // Do not redirect; let the applyActionCode handler above process the verification
       return;
     }
-    window.location.replace("login.html");
+    window.location.replace("/login");
     return;
   }
 
@@ -92,7 +92,7 @@ onAuthStateChanged(auth, async (user) => {
     logoutBtn.style.display = "inline-block";
     logoutBtn.onclick = async () => {
       await signOut(auth);
-      window.location.replace("login.html");
+      window.location.replace("/login");
     };
   }
 
@@ -188,7 +188,7 @@ async function showVerifySuccess() {
 
     if (time <= 0) {
       clearInterval(interval);
-      window.location.replace("index.html");
+      window.location.replace("/");
     }
   }, 1000);
 }

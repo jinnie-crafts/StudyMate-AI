@@ -11,18 +11,18 @@
   <meta name="keywords" content="StudyMate AI, AI Study Assistant, AI Tutor, AI Learning Platform, Exam Preparation, Smart Notes, Revision Assistant, Coding Assistant, Educational AI, UPSC, JEE, NEET" />
   <meta name="author" content="StudyMate AI Team" />
   <meta name="robots" content="index, follow" />
-  <link rel="canonical" href="https://aadirishi.in/index.html" />
+  <link rel="canonical" href="https://aadirishi.in//" />
   
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://aadirishi.in/index.html" />
+  <meta property="og:url" content="https://aadirishi.in//" />
   <meta property="og:title" content="StudyMate AI - Smart AI Study Assistant" />
   <meta property="og:description" content="Prepare for UPSC, JEE, NEET, and learn coding with an intelligent AI tutor." />
   <meta property="og:image" content="https://aadirishi.in/img/study-mate.png" />
 
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image" />
-  <meta property="twitter:url" content="https://aadirishi.in/index.html" />
+  <meta property="twitter:url" content="https://aadirishi.in//" />
   <meta property="twitter:title" content="StudyMate AI - Smart AI Study Assistant" />
   <meta property="twitter:description" content="Prepare for UPSC, JEE, NEET, and learn coding with an intelligent AI tutor." />
   <meta property="twitter:image" content="https://aadirishi.in/img/study-mate.png" />
@@ -298,8 +298,8 @@
             Changelog
           </button>
           <div class="footer-links">
-            <a href="privacy.html" style="color: inherit; text-decoration: none;">Privacy</a>
-            <a href="terms.html" style="color: inherit; text-decoration: none;">Terms</a>
+            <a href="/privacy" style="color: inherit; text-decoration: none;">Privacy</a>
+            <a href="/terms" style="color: inherit; text-decoration: none;">Terms</a>
             <span>© 2026</span>
           </div>
         </footer>
@@ -394,8 +394,8 @@
 
                 <div class="divider"></div>
                 <div style="padding: 8px 12px; display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-soft);">
-                  <a href="privacy.html" style="color: inherit;">Privacy Policy</a>
-                  <a href="terms.html" style="color: inherit;">Terms</a>
+                  <a href="/privacy" style="color: inherit;">Privacy Policy</a>
+                  <a href="/terms" style="color: inherit;">Terms</a>
                 </div>
 
                 <button id="logoutBtn" class="ghost-btn full-width" type="button">Logout</button>
@@ -486,8 +486,8 @@
       
       <div style="margin-bottom: 24px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 13px;">
         <ul style="margin: 0; padding-left: 20px; color: var(--text-muted);">
-          <li><a href="privacy.html" target="_blank" style="color: var(--accent-main); text-decoration: underline;">Privacy Policy</a></li>
-          <li style="margin-top: 8px;"><a href="terms.html" target="_blank" style="color: var(--accent-main); text-decoration: underline;">Terms of Service</a></li>
+          <li><a href="/privacy" target="_blank" style="color: var(--accent-main); text-decoration: underline;">Privacy Policy</a></li>
+          <li style="margin-top: 8px;"><a href="/terms" target="_blank" style="color: var(--accent-main); text-decoration: underline;">Terms of Service</a></li>
         </ul>
       </div>
 
@@ -514,7 +514,7 @@
       var oobCode = params.get("oobCode");
       if (mode && oobCode) {
         console.log("[AUTH ACTION - EARLY] Detected action link on dashboard:", mode);
-        var targets = { resetPassword: "reset.html", verifyEmail: "verify.html", recoverEmail: "recover.html" };
+        var targets = { resetPassword: "/reset", verifyEmail: "/verify", recoverEmail: "/recover" };
         var target = targets[mode];
         if (target) {
           window.location.replace(target + "?" + params.toString());

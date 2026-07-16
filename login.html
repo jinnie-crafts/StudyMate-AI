@@ -9,10 +9,10 @@
   <meta name="description"
     content="Sign in to StudyMate AI to access your personalized study assistant, resume your learning streak, and get smart revision notes." />
   <meta name="robots" content="index, follow" />
-  <link rel="canonical" href="https://aadirishi.in/login.html" />
+  <link rel="canonical" href="https://aadirishi.in//login" />
 
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://aadirishi.in/login.html" />
+  <meta property="og:url" content="https://aadirishi.in//login" />
   <meta property="og:title" content="Login to StudyMate AI" />
   <meta property="og:description" content="Sign in to access your personalized AI tutor." />
   <meta property="og:image" content="https://aadirishi.in/img/study-mate.png" />
@@ -29,7 +29,7 @@
       "@type": "ListItem",
       "position": 1,
       "name": "Home",
-      "item": "https://aadirishi.in/index.html"
+      "item": "https://aadirishi.in//"
     },{
       "@type": "ListItem",
       "position": 2,
@@ -121,10 +121,10 @@
       </button>
       <footer class="auth-card-footer">
         <p id="authMessage" class="form-message"></p>
-        <p class="auth-switch">Don't have an account? <a href="signup.html">Create one</a></p>
+        <p class="auth-switch">Don't have an account? <a href="/signup">Create one</a></p>
         <div class="auth-legal-links">
-          <a href="privacy.html">Privacy Policy</a>
-          <a href="terms.html">Terms of Service</a>
+          <a href="/privacy">Privacy Policy</a>
+          <a href="/terms">Terms of Service</a>
         </div>
       </footer>
     </main>
@@ -169,7 +169,7 @@
       var oobCode = params.get("oobCode");
       if (mode && oobCode) {
         console.log("[AUTH ACTION - EARLY] Detected action link on login page:", mode);
-        var targets = { resetPassword: "reset.html", verifyEmail: "verify.html", recoverEmail: "recover.html" };
+        var targets = { resetPassword: "/reset", verifyEmail: "/verify", recoverEmail: "/recover" };
         var target = targets[mode];
         if (target) {
           window.location.replace(target + "?" + params.toString());

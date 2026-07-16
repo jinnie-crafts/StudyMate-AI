@@ -51,10 +51,45 @@ graph TD
    cp .env.example .env
    ```
 3. Add your [OpenRouter API Key](https://openrouter.ai/keys) to the `.env` file.
-4. Start the proxy:
+4. **Firebase Admin Configuration (Required)**:
+   The backend uses Firebase Admin for knowledge base operations and security. Configure authentication using ONE of these methods:
+   - **Method A (Recommended / Production)**: Add these to your `.env`:
+     ```env
+     FIREBASE_PROJECT_ID="your_project_id"
+     FIREBASE_CLIENT_EMAIL="your_client_email@your_project.iam.gserviceaccount.com"
+     FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+     ```
+   - **Method B (Local Development)**: Place your `serviceAccountKey.json` inside the `server/` directory. This is safely ignored by Git and will be loaded automatically if `NODE_ENV` is not production.
+5. Start the proxy:
    ```bash
    npm start
    ```
+
+### Health & Monitoring
+The backend exposes a detailed health endpoint to verify initialization status and subsystem connectivity.
+```bash
+curl http://localhost:3001/api/health
+```
+**Example Response:**
+```json
+{
+  "status": "healthy",
+  "service": "StudyMate AI Backend",
+  "firebaseAdmin": "initialized",
+  "firestore": "connected",
+  "authentication": "connected",
+  "credentialSource": "Environment Variables",
+  "uptime": 120.5,
+  "version": "1.0.0",
+  "timestamp": "2023-10-25T10:00:00.000Z"
+}
+```
+*Note: Status will be `degraded` if a subsystem fails, and `unhealthy` if Firebase fails to initialize.*
+
+### Common Troubleshooting (Backend)
+- **`Error: Missing Firebase credentials`**: Ensure your `.env` contains valid credentials or `serviceAccountKey.json` is correctly placed in the `server/` directory.
+- **`Warning: Local serviceAccountKey.json detected but ignored`**: You are running in production (`NODE_ENV=production`). Local files are strictly ignored. Use environment variables.
+- **`Failed to parse environment variables`**: Ensure your `FIREBASE_PRIVATE_KEY` has proper `\n` characters and includes the `-----BEGIN PRIVATE KEY-----` header.
 
 ### 2. Frontend Setup
 1. Update `firebase.js` with your Firebase project credentials.

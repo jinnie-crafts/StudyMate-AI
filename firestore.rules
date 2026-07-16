@@ -56,7 +56,8 @@ service cloud.firestore {
           'name', 'displayName', 'email', 'photoURL', 'lastLogin', 'emailVerified',
           'onboardingDone', 'hasSeenWelcome', 'settings', 'updatedAt', 'questionsAsked',
           'questionsToday', 'lastActiveDate', 'streakCount', 'passwordChangeMethod',
-          'passwordChangedAt', 'provider', 'role', 'isAdmin', 'isPremium', 'subscription', 'plan', 'isBlocked', 'accountStatus'
+          'passwordChangedAt', 'provider', 'role', 'isAdmin', 'isPremium', 'subscription', 'plan', 'isBlocked', 'accountStatus',
+          'acceptedPrivacyPolicy', 'acceptedTerms', 'agreementVersion', 'agreementAcceptedAt', 'agreementAcceptedMethod', 'agreementAcceptedUserAgent', 'agreementAccepted'
         ]);
 
       // Delete: disabled

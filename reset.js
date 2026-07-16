@@ -212,7 +212,7 @@ if (resetBtn) {
 // ---------------------------------------------------------------------------
 
 function showResetSuccess(newPassword) {
-  let target = "login.html";
+  let target = "/login";
   let targetLabel = "login";
   const email = localStorage.getItem("resetEmail");
   let autoLoginSuccess = false;
@@ -223,7 +223,7 @@ function showResetSuccess(newPassword) {
     if (email && newPassword) {
       try {
         await signInWithEmailAndPassword(auth, email, newPassword);
-        target = "index.html";
+        target = "/";
         targetLabel = "dashboard";
         autoLoginSuccess = true;
         localStorage.removeItem("resetEmail");

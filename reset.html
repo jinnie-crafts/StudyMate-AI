@@ -93,7 +93,7 @@
         <div class="error-icon">⚠️</div>
         <h2 id="resetErrorTitle">Invalid Reset Link</h2>
         <p id="resetErrorMessage">This password reset link is invalid or has expired. Please request a new one.</p>
-        <a href="login.html" class="primary-btn" style="display: inline-block; text-decoration: none; text-align: center;">Back to Login</a>
+        <a href="/login" class="primary-btn" style="display: inline-block; text-decoration: none; text-align: center;">Back to Login</a>
       </div>
 
       <!-- Password reset form (shown after oobCode is verified) -->
@@ -111,7 +111,7 @@
   <footer class="auth-footer">
     <p class="auth-switch"><button id="backBtn" onclick="goBack()" style="background: none; border: none; color: inherit; cursor: pointer; text-decoration: underline; font-family: inherit; font-size: inherit; padding: 0;">Back to Login</button></p>
     <p class="auth-switch" style="margin-top: 12px; font-size: 13px; opacity: 0.8;">
-      <a href="privacy.html">Privacy Policy</a> | <a href="terms.html">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a> | <a href="/terms">Terms of Service</a>
     </p>
   </footer>
 
@@ -120,7 +120,7 @@
       if (document.referrer && document.referrer !== window.location.href) {
         window.history.back();
       } else {
-        window.location.href = "login.html";
+        window.location.href = "/login";
       }
     }
 

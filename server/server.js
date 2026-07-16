@@ -202,6 +202,16 @@ const ALLOWED_STATIC_FILES = new Set([
 
 const ALLOWED_STATIC_DIRS = ['img', 'config', '.well-known'];
 
+// Clean URLs Middleware for local development parity with Firebase Hosting
+app.use((req, res, next) => {
+  if (req.method === 'GET' && req.path.endsWith('.html') && req.path !== '/index.html') {
+    const cleanPath = req.path.slice(0, -5);
+    const query = req.url.slice(req.path.length);
+    return res.redirect(301, cleanPath + query);
+  }
+  next();
+});
+
 app.use((req, res, next) => {
   // Normalize path to prevent path traversal
   const safePath = path.normalize(req.path).replace(/^(\.\.[\/\\])+/, '');
@@ -221,8 +231,8 @@ app.use((req, res, next) => {
     return next();
   }
 
-  // Check if file is whitelisted
-  if (ALLOWED_STATIC_FILES.has(baseName)) {
+  // Check if file is whitelisted (handle clean URLs by checking with .html appended)
+  if (ALLOWED_STATIC_FILES.has(baseName) || ALLOWED_STATIC_FILES.has(baseName + '.html')) {
     return next();
   }
 
@@ -236,10 +246,27 @@ app.use((req, res, next) => {
   res.status(403).send('Forbidden');
 });
 
-app.use(express.static(path.join(__dirname, "../")));
+app.use(express.static(path.join(__dirname, "../"), { extensions: ['html'] }));
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", service: "StudyMate AI Backend" });
+app.get("/api/health", async (_req, res) => {
+  const firebaseStatus = require('./services/firebaseAdmin');
+  const selfTest = await firebaseStatus.performSelfTest();
+  
+  const isHealthy = firebaseStatus.isInitialized && selfTest.firestore === 'connected' && selfTest.auth === 'connected';
+  const isUnhealthy = !firebaseStatus.isInitialized;
+  const statusLevel = isHealthy ? 'healthy' : (isUnhealthy ? 'unhealthy' : 'degraded');
+
+  res.json({ 
+    status: statusLevel, 
+    service: "StudyMate AI Backend",
+    firebaseAdmin: firebaseStatus.isInitialized ? "initialized" : "uninitialized",
+    firestore: selfTest.firestore,
+    authentication: selfTest.auth,
+    credentialSource: firebaseStatus.credentialSource || "None",
+    uptime: process.uptime(),
+    version: process.env.npm_package_version || "1.0.0",
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1150,6 +1177,44 @@ async function fetchNewsData(query) {
 // Start
 // ---------------------------------------------------------------------------
 
-app.listen(PORT, () => {
-  log.info({ port: PORT }, `StudyMate AI Backend running on http://localhost:${PORT}`);
+const serverStartupStart = Date.now();
+const server = app.listen(PORT, () => {
+  const totalStartupTime = Date.now() - serverStartupStart;
+  const firebaseStatus = require('./services/firebaseAdmin');
+  
+  log.info({ 
+    port: PORT,
+    startupTimeMs: totalStartupTime,
+    firebaseInitMs: firebaseStatus.initDurationMs || 0
+  }, `StudyMate AI Backend running on http://localhost:${PORT}`);
 });
+
+// Graceful Shutdown
+function gracefulShutdown(signal) {
+  log.info(`[Server] Received ${signal}. Shutting down gracefully...`);
+  
+  server.close(async () => {
+    log.info('[Server] Closed out remaining connections.');
+    
+    try {
+      const firebaseStatus = require('./services/firebaseAdmin');
+      if (firebaseStatus.isInitialized && firebaseStatus.app) {
+        await firebaseStatus.app.delete();
+        log.info('[Firebase Admin] Resources released cleanly.');
+      }
+    } catch (e) {
+      log.error({ err: e }, '[Firebase Admin] Error during cleanup.');
+    }
+    
+    process.exit(0);
+  });
+  
+  // Force close after 10s
+  setTimeout(() => {
+    log.error('[Server] Could not close connections in time, forcefully shutting down');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

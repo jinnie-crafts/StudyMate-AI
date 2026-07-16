@@ -96,14 +96,14 @@ const initAuth = () => {
           setupUI();
           showDashboard();
         } else {
-          window.location.replace("index.html");
+          window.location.replace("/");
         }
       } catch (err) {
         console.error("Auth error:", err);
-        window.location.replace("index.html");
+        window.location.replace("/");
       }
     } else {
-      window.location.replace("index.html");
+      window.location.replace("/");
     }
     unsubscribe(); // Stop listening after first check
   });
