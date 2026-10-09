@@ -34,26 +34,24 @@ const NEWS_QUERY_REGEX = /(news|headlines|breaking|latest news|current affairs)/
 const CODE_QUERY_REGEX = /code|program|example|debug|script|function|snippet|coding/i;
 const MATH_QUERY_REGEX = /math|calculate|solve|equation/i;
 const DIAGRAM_QUERY_REGEX = /diagram|chart|graph|flow|flowchart|structure|architecture/i;
-const DEFAULT_MODEL = "deepseek/deepseek-chat:free";
+const DEFAULT_MODEL = "google/gemma-4-31b-it:free";
 const IDENTITY_CLASSIFIER_MODEL = "openrouter/free";
 
 const MODEL_POOL = [
-  "minimax/minimax-m2.5:free",
-  "meta-llama/llama-3-8b-instruct:free",
-  "google/gemma-7b-it:free",
-  "nousresearch/nous-capybara-7b:free",
-  "openchat/openchat-7b:free",
-  "nvidia/nemotron-3-nano-30b-a3b:free"
+  "google/gemma-4-31b-it:free",
+  "cohere/north-mini-code:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "apodex/apodex-1.1-mini:free"
 ];
 
 // Model Strategy Constants
 const MODELS = {
-  GENERAL: "minimax/minimax-m2.5:free",
-  LONG_EXPLANATION: "meta-llama/llama-3-8b-instruct:free",
-  CODING: "nousresearch/nous-capybara-7b:free",
-  REASONING: "openchat/openchat-7b:free",
-  FAST: "minimax/minimax-m2.5:free",
-  FALLBACK: "nvidia/nemotron-3-nano-30b-a3b:free"
+  GENERAL: "google/gemma-4-31b-it:free",
+  LONG_EXPLANATION: "google/gemma-4-31b-it:free",
+  CODING: "cohere/north-mini-code:free",
+  REASONING: "google/gemma-4-31b-it:free",
+  FAST: "google/gemma-4-31b-it:free",
+  FALLBACK: "google/gemma-4-26b-a4b-it:free"
 };
 
 const failureTracker = new Map(); // model -> { expiry, reason }
@@ -276,12 +274,10 @@ app.get("/api/health", async (_req, res) => {
 // ---------------------------------------------------------------------------
 
 const MODEL_FALLBACKS = [
-  "minimax/minimax-m2.5:free",
-  "meta-llama/llama-3-8b-instruct:free",
-  "google/gemma-7b-it:free",
-  "nousresearch/nous-capybara-7b:free",
-  "openchat/openchat-7b:free",
-  "nvidia/nemotron-3-nano-30b-a3b:free"
+  "google/gemma-4-31b-it:free",
+  "cohere/north-mini-code:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "apodex/apodex-1.1-mini:free"
 ];
 
 const MODEL_TIMEOUT_MS = 25000;

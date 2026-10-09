@@ -4,8 +4,7 @@
  * Analyzes recent chat messages to extract structured, persistent facts
  * and user preferences for the conversational memory system.
  */
-
-const EXTRACTOR_MODEL = "google/gemma-7b-it:free"; // Fast model for internal tasks
+const EXTRACTOR_MODEL = "google/gemma-4-31b-it:free"; // Fast model for internal tasks
 const EXTRACTION_TIMEOUT_MS = 6000;
 
 /**
