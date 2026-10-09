@@ -470,10 +470,15 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
       let fullText = "";
       let success = false;
       let usedModel = "";
+      let fallbackReason = null;
 
       for (const model of candidateChain) {
         try {
           console.log(`[Zero-Failure Streaming] Attempting: ${model}`);
+          
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+
           const streamResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -487,53 +492,83 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
               messages: finalMessages,
               stream: true,
               provider: { allow_fallbacks: false }
-            })
+            }),
+            signal: controller.signal
           });
 
-          if (!streamResponse.ok) throw new Error(`HTTP ${streamResponse.status}`);
+          clearTimeout(timeoutId);
+
+          if (!streamResponse.ok) {
+            const rawError = await streamResponse.text().catch(() => "");
+            throw new Error(`HTTP ${streamResponse.status}: ${rawError}`);
+          }
 
           const reader = streamResponse.body;
           const decoder = new TextDecoder();
           const streamReader = reader.getReader();
           let firstChunk = true;
+          let buffer = "";
 
           while (true) {
             const { done, value } = await streamReader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
             for (const line of lines) {
               const cleanedLine = line.trim();
               if (cleanedLine.startsWith("data: ")) {
                 const dataStr = cleanedLine.slice(6).trim();
-                if (dataStr === "[DONE]") break;
+                if (dataStr === "[DONE]") continue; // Keep processing the rest of the buffer
                 try {
                   const data = JSON.parse(dataStr);
-                  const content = data.choices[0]?.delta?.content || "";
-                  if (content) {
-                    if (firstChunk) {
+                  const content = data.choices?.[0]?.delta?.content;
+                  
+                  if (content !== undefined && content !== null) {
+                    if (firstChunk && content) {
                       firstChunk = false;
                       success = true;
                       usedModel = model;
                     }
-                    fullText += content;
-                    res.write(`data: ${JSON.stringify({ content })}\n\n`);
+                    if (content) {
+                      fullText += content;
+                      res.write(`data: ${JSON.stringify({ content })}\n\n`);
+                    }
                   }
-                } catch (e) { }
+                } catch (e) {
+                  console.error(`[Zero-Failure Streaming] Parse error on chunk: ${e.message}`);
+                }
               }
             }
           }
 
           if (success) break;
+          // If we finish the stream but never got success=true (e.g. empty response)
+          if (!success) {
+            throw new Error("EMPTY_MODEL_RESPONSE");
+          }
         } catch (error) {
           console.error(`[Zero-Failure Streaming] FAILURE with ${model}: ${error.message}`);
           failureTracker.set(model, now + COOLDOWN_MS);
+
+          if (!fallbackReason) {
+            if (error.name === "AbortError") fallbackReason = "REQUEST_TIMEOUT";
+            else if (error.message.includes("HTTP 401") || error.message.includes("HTTP 403")) fallbackReason = "PROVIDER_AUTH_ERROR";
+            else if (error.message.includes("HTTP 402")) fallbackReason = "INSUFFICIENT_CREDITS";
+            else if (error.message.includes("HTTP 429")) fallbackReason = "RATE_LIMITED";
+            else if (error.message.includes("EMPTY_MODEL_RESPONSE")) fallbackReason = "EMPTY_MODEL_RESPONSE";
+            else fallbackReason = `PROVIDER_ERROR: ${error.message}`;
+          }
         }
       }
 
       if (!success) {
         console.warn("[Zero-Failure Streaming] CRITICAL: All models failed. Using safe fallback.");
+        if (!fallbackReason) {
+            fallbackReason = candidateChain.length === 0 ? "ALL_MODELS_IN_COOLDOWN" : "UNKNOWN_AI_ERROR";
+        }
         const fallback = getSafeFallbackReply(latestUserMessage, intent);
         fullText = fallback;
         usedModel = "safe-fallback";
@@ -550,7 +585,8 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
         doubt: doubt,
         success: usedModel !== "safe-fallback",
         rag_enhanced: ragResult.enhanced || false,
-        rag_debug: ragResult.debug || null
+        rag_debug: ragResult.debug || null,
+        fallbackReason: fallbackReason
       });
 
       res.write(`data: ${JSON.stringify({ metadata: finalResult })}\n\n`);
@@ -561,6 +597,7 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
     // --- Legacy JSON Path (Internal fallback or non-stream clients) ---
     let aiResponse = "";
     let modelUsed = "";
+    let fallbackReasonLegacy = null;
 
     for (const model of candidateChain) {
       try {
@@ -573,15 +610,26 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
           break;
         } else {
           failureTracker.set(model, now + COOLDOWN_MS);
+          if (!fallbackReasonLegacy) fallbackReasonLegacy = "EMPTY_OR_INVALID_RESPONSE";
         }
       } catch (error) {
         failureTracker.set(model, now + COOLDOWN_MS);
+        if (!fallbackReasonLegacy) {
+           if (error.name === "AbortError") fallbackReasonLegacy = "REQUEST_TIMEOUT";
+           else if (error.message.includes("HTTP 401") || error.message.includes("HTTP 403")) fallbackReasonLegacy = "PROVIDER_AUTH_ERROR";
+           else if (error.message.includes("HTTP 402")) fallbackReasonLegacy = "INSUFFICIENT_CREDITS";
+           else if (error.message.includes("HTTP 429")) fallbackReasonLegacy = "RATE_LIMITED";
+           else fallbackReasonLegacy = `PROVIDER_ERROR: ${error.message}`;
+        }
       }
     }
 
     if (!aiResponse) {
       aiResponse = getSafeFallbackReply(latestUserMessage, intent);
       modelUsed = "safe-fallback";
+      if (!fallbackReasonLegacy) {
+         fallbackReasonLegacy = candidateChain.length === 0 ? "ALL_MODELS_IN_COOLDOWN" : "UNKNOWN_AI_ERROR";
+      }
     }
 
     const answerBody = String(aiResponse).trim();
@@ -594,7 +642,8 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
       doubt: doubt,
       success: modelUsed !== "safe-fallback",
       rag_enhanced: ragResult.enhanced || false,
-      rag_debug: ragResult.debug || null
+      rag_debug: ragResult.debug || null,
+      fallbackReason: fallbackReasonLegacy
     });
 
     return res.json(finalResult);
