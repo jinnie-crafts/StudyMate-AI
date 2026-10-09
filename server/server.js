@@ -56,8 +56,10 @@ const MODELS = {
   FALLBACK: "nvidia/nemotron-3-nano-30b-a3b:free"
 };
 
-const failureTracker = new Map(); // model -> cooldownExpiry
+const failureTracker = new Map(); // model -> { expiry, reason }
 const COOLDOWN_MS = 5 * 60 * 1000;
+let lastProbeTime = 0;
+const PROBE_INTERVAL_MS = 10000;
 
 let lastIdentityIndex = -1;
 const IDENTITY_RESPONSES = [
@@ -446,14 +448,42 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
 
     // 6. Build model chain with cooldown awareness
     const now = Date.now();
-    const candidateChain = buildModelCandidates(selectedModel).filter(model => {
-      const expiry = failureTracker.get(model);
-      if (expiry && now < expiry) {
-        console.log(`[Zero-Failure] Skipping benched model: ${model} (Cooling down)`);
+    let candidateChain = buildModelCandidates(selectedModel).filter(model => {
+      const record = failureTracker.get(model);
+      if (record && now < record.expiry) {
+        const remainingStr = ((record.expiry - now) / 1000).toFixed(1);
+        console.log(`[Zero-Failure] Skipping benched model: ${model} (Cooling down for ${remainingStr}s, Reason: ${record.reason})`);
         return false;
       }
       return true;
     });
+
+    if (candidateChain.length === 0) {
+      if (now - lastProbeTime > PROBE_INTERVAL_MS) {
+        const fullChain = buildModelCandidates(selectedModel);
+        let eligibleProbe = null;
+        for (const m of fullChain) {
+           const record = failureTracker.get(m);
+           if (!record) { eligibleProbe = m; break; }
+           const reason = record.reason || "";
+           if (!reason.includes("PROVIDER_AUTH_ERROR") && !reason.includes("INSUFFICIENT_CREDITS")) {
+              eligibleProbe = m;
+              break;
+           }
+        }
+        
+        if (eligibleProbe) {
+           lastProbeTime = now;
+           console.log(`[Zero-Failure] All models benched. Initiating controlled probe on ${eligibleProbe}`);
+           candidateChain = [eligibleProbe];
+        } else {
+           console.log(`[Zero-Failure] All models benched, but no eligible models for probing (hard auth/credit errors).`);
+        }
+      } else {
+        const remainingProbe = ((PROBE_INTERVAL_MS - (now - lastProbeTime)) / 1000).toFixed(1);
+        console.log(`[Zero-Failure] All models benched. Probe on cooldown for ${remainingProbe}s.`);
+      }
+    }
 
     // 7. Support Streaming if requested
     if (req.body.stream) {
@@ -471,14 +501,22 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
       let success = false;
       let usedModel = "";
       let fallbackReason = null;
+      const requestId = Math.random().toString(36).substring(2, 9);
+      console.log(`[REQ-${requestId}] Chat request initialized. stream=true`);
 
       for (const model of candidateChain) {
+        let streamEventsParsed = 0;
+        let contentTokensReceived = 0;
+        let doneReceived = false;
+        const modelStartTime = Date.now();
+
         try {
-          console.log(`[Zero-Failure Streaming] Attempting: ${model}`);
+          console.log(`[REQ-${requestId}] [Zero-Failure Streaming] Attempting model: ${model}`);
           
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
 
+          console.log(`[REQ-${requestId}] Starting OpenRouter fetch request...`);
           const streamResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -498,8 +536,10 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
 
           clearTimeout(timeoutId);
 
+          console.log(`[REQ-${requestId}] Upstream HTTP status: ${streamResponse.status}`);
           if (!streamResponse.ok) {
             const rawError = await streamResponse.text().catch(() => "");
+            console.log(`[REQ-${requestId}] Sanitized upstream error: ${rawError.substring(0, 200)}`);
             throw new Error(`HTTP ${streamResponse.status}: ${rawError}`);
           }
 
@@ -511,7 +551,14 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
 
           while (true) {
             const { done, value } = await streamReader.read();
-            if (done) break;
+            if (done) {
+               console.log(`[REQ-${requestId}] Stream reader done.`);
+               break;
+            }
+            
+            if (value && value.length > 0) {
+               // console.log(`[REQ-${requestId}] Stream reader received ${value.length} bytes.`);
+            }
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
@@ -521,9 +568,21 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
               const cleanedLine = line.trim();
               if (cleanedLine.startsWith("data: ")) {
                 const dataStr = cleanedLine.slice(6).trim();
-                if (dataStr === "[DONE]") continue; // Keep processing the rest of the buffer
+                if (dataStr === "[DONE]") {
+                   doneReceived = true;
+                   console.log(`[REQ-${requestId}] Received [DONE] event.`);
+                   continue; // Keep processing the rest of the buffer
+                }
+                
                 try {
                   const data = JSON.parse(dataStr);
+                  streamEventsParsed++;
+
+                  if (data.error) {
+                    console.log(`[REQ-${requestId}] Top-level error in stream:`, JSON.stringify(data.error).substring(0, 100));
+                    throw new Error(`STREAM_ERROR: ${data.error.message || "Unknown stream error"}`);
+                  }
+
                   const content = data.choices?.[0]?.delta?.content;
                   
                   if (content !== undefined && content !== null) {
@@ -531,44 +590,57 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
                       firstChunk = false;
                       success = true;
                       usedModel = model;
+                      failureTracker.delete(model);
+                      console.log(`[REQ-${requestId}] Model ${model} marked successful on first content.`);
                     }
                     if (content) {
+                      contentTokensReceived++;
                       fullText += content;
                       res.write(`data: ${JSON.stringify({ content })}\n\n`);
                     }
                   }
                 } catch (e) {
-                  console.error(`[Zero-Failure Streaming] Parse error on chunk: ${e.message}`);
+                  if (e.message.startsWith("STREAM_ERROR")) {
+                     throw e; // Bubble up provider stream errors
+                  }
+                  console.error(`[REQ-${requestId}] Parse error on chunk: ${e.message}`);
                 }
               }
             }
           }
 
+          console.log(`[REQ-${requestId}] Finished loop for ${model}. streamEventsParsed=${streamEventsParsed}, contentTokensReceived=${contentTokensReceived}, doneReceived=${doneReceived}, success=${success}`);
           if (success) break;
+
           // If we finish the stream but never got success=true (e.g. empty response)
           if (!success) {
             throw new Error("EMPTY_MODEL_RESPONSE");
           }
         } catch (error) {
-          console.error(`[Zero-Failure Streaming] FAILURE with ${model}: ${error.message}`);
-          failureTracker.set(model, now + COOLDOWN_MS);
-
+          const elapsed = Date.now() - modelStartTime;
+          console.error(`[REQ-${requestId}] FAILURE with ${model} after ${elapsed}ms: ${error.message}`);
+          
           if (!fallbackReason) {
             if (error.name === "AbortError") fallbackReason = "REQUEST_TIMEOUT";
             else if (error.message.includes("HTTP 401") || error.message.includes("HTTP 403")) fallbackReason = "PROVIDER_AUTH_ERROR";
             else if (error.message.includes("HTTP 402")) fallbackReason = "INSUFFICIENT_CREDITS";
             else if (error.message.includes("HTTP 429")) fallbackReason = "RATE_LIMITED";
+            else if (error.message.includes("STREAM_ERROR")) fallbackReason = error.message;
             else if (error.message.includes("EMPTY_MODEL_RESPONSE")) fallbackReason = "EMPTY_MODEL_RESPONSE";
             else fallbackReason = `PROVIDER_ERROR: ${error.message}`;
+            console.log(`[REQ-${requestId}] Fallback reason captured: ${fallbackReason}`);
           }
+          failureTracker.set(model, { expiry: Date.now() + COOLDOWN_MS, reason: fallbackReason });
         }
       }
 
       if (!success) {
-        console.warn("[Zero-Failure Streaming] CRITICAL: All models failed. Using safe fallback.");
+        console.warn(`[REQ-${requestId}] CRITICAL: All models failed. Using safe fallback.`);
         if (!fallbackReason) {
+            console.log(`[REQ-${requestId}] Branch: candidateChain exhausted, fallbackReason was null.`);
             fallbackReason = candidateChain.length === 0 ? "ALL_MODELS_IN_COOLDOWN" : "UNKNOWN_AI_ERROR";
         }
+        console.log(`[REQ-${requestId}] Final fallback reason: ${fallbackReason}`);
         const fallback = getSafeFallbackReply(latestUserMessage, intent);
         fullText = fallback;
         usedModel = "safe-fallback";
@@ -607,13 +679,13 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
         if (isValidAIResponse(responseData)) {
           aiResponse = responseData;
           modelUsed = model;
+          failureTracker.delete(model);
           break;
         } else {
-          failureTracker.set(model, now + COOLDOWN_MS);
           if (!fallbackReasonLegacy) fallbackReasonLegacy = "EMPTY_OR_INVALID_RESPONSE";
+          failureTracker.set(model, { expiry: Date.now() + COOLDOWN_MS, reason: fallbackReasonLegacy });
         }
       } catch (error) {
-        failureTracker.set(model, now + COOLDOWN_MS);
         if (!fallbackReasonLegacy) {
            if (error.name === "AbortError") fallbackReasonLegacy = "REQUEST_TIMEOUT";
            else if (error.message.includes("HTTP 401") || error.message.includes("HTTP 403")) fallbackReasonLegacy = "PROVIDER_AUTH_ERROR";
@@ -621,6 +693,7 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
            else if (error.message.includes("HTTP 429")) fallbackReasonLegacy = "RATE_LIMITED";
            else fallbackReasonLegacy = `PROVIDER_ERROR: ${error.message}`;
         }
+        failureTracker.set(model, { expiry: Date.now() + COOLDOWN_MS, reason: fallbackReasonLegacy });
       }
     }
 
