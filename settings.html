@@ -225,12 +225,12 @@
                   <h3>Preferred AI Model</h3>
                   <p>Select your primary inference engine.</p>
                 </div>
-                <select class="settings-select" id="aiModelSelect">
-                  <option value="auto">Auto (Balanced - Free)</option>
-                  <option value="deepseek">DeepSeek R1 (Reasoning - Free)</option>
-                  <option value="qwen">Qwen 2.5 (Fast - Free)</option>
-                  <option value="llama">Llama 3 (Creative - Free)</option>
-                </select>
+                <div style="display: flex; flex-direction: column; width: 100%; max-width: 320px;">
+                  <select class="settings-select" id="aiModelSelect" style="width: 100%;">
+                    <option value="auto">Auto (Balanced - Recommended)</option>
+                  </select>
+                  <div id="aiModelDetailsContainer"></div>
+                </div>
               </div>
               <div class="settings-row">
                 <div class="row-info">

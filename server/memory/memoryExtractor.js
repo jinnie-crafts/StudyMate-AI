@@ -7,6 +7,13 @@
 const EXTRACTOR_MODEL = "google/gemma-4-31b-it:free"; // Fast model for internal tasks
 const EXTRACTION_TIMEOUT_MS = 6000;
 
+let modelRegistry = null;
+try {
+  modelRegistry = require('../services/modelRegistry');
+} catch (e) {
+  // Model registry fallback
+}
+
 /**
  * Extracts new memories from the latest user message and context.
  * 
@@ -49,6 +56,18 @@ Do not output any markdown code blocks (\`\`\`json) or other text. Just the raw 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), EXTRACTION_TIMEOUT_MS);
 
+    let modelToUse = EXTRACTOR_MODEL;
+    if (modelRegistry && typeof modelRegistry.resolveModelForRole === 'function') {
+      try {
+        const resolved = await modelRegistry.resolveModelForRole('fast_classifier');
+        if (resolved && resolved.provider_id) {
+          modelToUse = resolved.provider_id;
+        }
+      } catch (e) {
+        // fallback to EXTRACTOR_MODEL
+      }
+    }
+
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -58,7 +77,7 @@ Do not output any markdown code blocks (\`\`\`json) or other text. Just the raw 
         "X-Title": "StudyMate AI Internal"
       },
       body: JSON.stringify({
-        model: EXTRACTOR_MODEL,
+        model: modelToUse,
         messages: requestMessages,
         provider: { allow_fallbacks: false },
         temperature: 0.1

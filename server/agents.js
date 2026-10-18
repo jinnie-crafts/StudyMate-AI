@@ -6,10 +6,10 @@
 const memoryRunner = require("./memory/memoryRunner");
 
 const IDENTITY_RESPONSES = [
-  "StudyMate-AI is developed by Rishu Maurya.",
-  "This application was created by Rishu Maurya.",
-  "Rishu Maurya is the developer behind StudyMate-AI.",
-  "StudyMate-AI was built by Rishu Maurya."
+  "StudyMate-AI is developed by Harsh Maurya, Komal Sharma and Ruchii.",
+  "This application was created by Harsh Maurya, Komal Sharma and Ruchii.",
+  "Harsh Maurya, Komal Sharma and Ruchii are the developers of StudyMate-AI.",
+  "StudyMate-AI was built by Harsh Maurya, Komal Sharma and Ruchii."
 ];
 
 class AgentRunner {

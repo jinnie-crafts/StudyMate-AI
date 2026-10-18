@@ -36,6 +36,8 @@ import {
 import { initNotifications, stopNotifications } from "./notificationBell.js";
 import { marked } from "https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js";
 import hljs from "https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/+esm";
+import { spaNavigation } from "./spaNavigation.js";
+import { populateModelSelect, invalidateModelCache } from "./modelRegistryClient.js";
 
 const PASSWORD_DELETE_PROTECTION_DAYS = 3;
 
@@ -1161,6 +1163,7 @@ function initSettingsPage() {
     logoutAllSessionsBtn: document.getElementById("logoutAllSessionsBtn"),
 
     aiModelSelect: document.getElementById("aiModelSelect"),
+    aiModelDetailsContainer: document.getElementById("aiModelDetailsContainer"),
     aiStyleSelect: document.getElementById("aiStyleSelect"),
     aiToneSelect: document.getElementById("aiToneSelect"),
     autoQuestionToggle: document.getElementById("autoQuestionToggle"),
@@ -1178,6 +1181,10 @@ function initSettingsPage() {
     deleteAccountBtn: document.getElementById("deleteAccountBtn"),
     googleAccountStatus: document.getElementById("googleAccountStatus")
   };
+
+  if (ui.aiModelSelect) {
+    populateModelSelect(ui.aiModelSelect, state.userSettings.aiModel, ui.aiModelDetailsContainer);
+  }
 
   bindSettingsEvents();
   renderSettingsPreferences();
@@ -1279,6 +1286,9 @@ function initSettingsPage() {
 }
 
 function bindSettingsEvents() {
+  if (ui._settingsEventsBound) return;
+  ui._settingsEventsBound = true;
+
   if (ui.saveAccountBtn) ui.saveAccountBtn.addEventListener("click", () => saveAccountProfile());
   if (ui.changePasswordBtn) ui.changePasswordBtn.addEventListener("click", () => handleInAppPasswordChange());
   if (ui.logoutAllSessionsBtn) ui.logoutAllSessionsBtn.addEventListener("click", () => confirmLogoutAll());
@@ -1326,7 +1336,9 @@ async function loadUserSettings() {
         fontSize: settings.fontSize || 16
       };
 
-      if (ui.aiModelSelect) ui.aiModelSelect.value = state.userSettings.aiModel;
+      if (ui.aiModelSelect) {
+        populateModelSelect(ui.aiModelSelect, state.userSettings.aiModel, ui.aiModelDetailsContainer);
+      }
       if (ui.aiStyleSelect) ui.aiStyleSelect.value = state.userSettings.aiStyle;
       if (ui.aiToneSelect) ui.aiToneSelect.value = state.userSettings.aiTone;
       if (ui.autoQuestionToggle) ui.autoQuestionToggle.checked = state.userSettings.autoQuestion;
@@ -1679,6 +1691,9 @@ async function processAccountDeletion() {
 // ---------------------------------------------------------------------------
 
 function bindDashboardEvents() {
+  if (ui._dashboardEventsBound) return;
+  ui._dashboardEventsBound = true;
+
   ui.newChatBtn.addEventListener("click", handleNewChat);
   ui.logoutBtn.addEventListener("click", handleLogout);
   bindModeDropdown();
@@ -1785,6 +1800,8 @@ async function handleLogout() {
     }
     // --- Chat Session Persistence: clear on logout to prevent stale state ---
     persistLastActiveChatId(null, state.currentUser?.uid);
+    spaNavigation.clearUserCaches();
+    invalidateModelCache();
     history.replaceState(null, "", "/"); // Route cleanup on logout
     await signOut(auth);
     queueFlashToast("Logged out successfully.", "success");
@@ -2776,7 +2793,14 @@ function closeNotesDropdown() { ui.notesDropdown.classList.remove("open"); ui.no
 // Navigation / settings
 // ---------------------------------------------------------------------------
 
-function goToSettings() { window.location.href = "/settings"; }
+function goToSettings() {
+  if (spaNavigation) {
+    spaNavigation.navigateTo("/settings");
+  } else {
+    window.location.href = "/settings";
+  }
+}
+window.goToSettings = goToSettings;
 
 // ---------------------------------------------------------------------------
 // Theme system (4 themes)
@@ -4040,15 +4064,43 @@ async function bootstrap() {
     // 2. Initialize Mermaid (Lazy Singleton)
     initMermaidSingleton();
 
-    // 3. Initialize Page-Specific UI Bindings
+    // 3. Initialize Seamless SPA Navigation & View Routing
+    spaNavigation.init();
+    window.spaNavigation = spaNavigation;
+    spaNavigation.onNavigate(async (targetPath, dataPage) => {
+      applySavedTheme();
+      if (dataPage === "settings") {
+        initSettingsPage();
+        if (state.currentUser) {
+          await loadUserSettings();
+          await loadUserMemory();
+          populateUserInfo(state.currentUser);
+          await loadUsageStats();
+          loadSessions(state.currentUser);
+        }
+        hideSkeletonOverlay("settingsSkeleton");
+      } else if (dataPage === "dashboard") {
+        initDashboardPage();
+        if (state.currentUser) {
+          startDashboardApp(state.currentUser);
+          populateUserInfo(state.currentUser);
+        }
+        hideSkeletonOverlay("dashboardSkeleton");
+      }
+    });
+
+    // 4. Initialize Page-Specific UI Bindings
     const page = document.body.dataset.page;
     if (page === "login") initLoginPage();
     if (page === "signup") initSignupPage();
     if (page === "settings") initSettingsPage();
     if (page === "dashboard") initDashboardPage();
 
-    // 4. Auth Gatekeeper (Handles redirects and initApp)
+    // 5. Auth Gatekeeper (Handles redirects and initApp)
     await initAuth();
+    if (state.currentUser) {
+      spaNavigation.setUser(state.currentUser);
+    }
 
   } catch (err) {
     console.error("StudyMate Bootstrap Error:", err);

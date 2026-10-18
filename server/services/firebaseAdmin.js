@@ -119,7 +119,16 @@ try {
           failReason = 'Error reading or parsing serviceAccountKey.json: ' + e.message;
         }
       } else {
-        failReason = 'serviceAccountKey.json not found in server/ or project-root/';
+        // Fallback: Initialize with Project ID for token verification and auth services
+        const fallbackProjectId = projectId || 'studymate-ai-bc65e';
+        try {
+          app = admin.initializeApp({ projectId: fallbackProjectId });
+          initStatus = 'SUCCESS';
+          activeCredentialSource = 'Project ID Token Verifier';
+          console.log(`ℹ️ [Firebase Admin] Initialized with Project ID (${fallbackProjectId}) for token verification`);
+        } catch (e) {
+          failReason = 'Failed initializing fallback project app: ' + e.message;
+        }
       }
     } else {
       initStrategy = 'None (Production strict mode)';
@@ -163,7 +172,11 @@ Configure the required environment variables securely via your hosting provider 
 - FIREBASE_PRIVATE_KEY
 `);
       }
-      process.exit(1); // Fail fast
+      if (isProduction) {
+        process.exit(1); // Fail fast in production
+      } else {
+        console.warn('⚠️ [Firebase Admin] Running in local development mode with uninitialized Firebase Admin.');
+      }
     } else {
       isInitialized = true;
       initDurationMs = Date.now() - initStartTime;
@@ -184,19 +197,28 @@ Status: Initialized Successfully
     initDurationMs = Date.now() - initStartTime;
   }
 } catch (error) {
-  console.error("\n❌ [Firebase Admin] Unhandled Initialization Error:");
-  console.error(error.message || error);
-  process.exit(1);
+  if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+    process.exit(1);
+  } else {
+    console.warn("⚠️ [Firebase Admin] Initialization error in development:", error.message || error);
+  }
 }
 
 // Initialize services using modular APIs where applicable
-const db = getFirestore(app);
-const auth = getAuth(app);
-const storage = getStorage(app);
+// Note: Firestore and Storage require Google service account / ADC credentials.
+// In development token verifier mode (Project ID only), only auth is functional.
+const hasGcpCredentials = activeCredentialSource !== 'None' && activeCredentialSource !== 'Project ID Token Verifier';
+const db = (app && hasGcpCredentials) ? getFirestore(app) : null;
+const auth = app ? getAuth(app) : null;
+const storage = (app && hasGcpCredentials) ? getStorage(app) : null;
 
 // Only log once during initial require
-if (!global.__FIREBASE_ADMIN_LOGGED) {
-  console.log("[Firebase Admin] Firestore connected");
+if (!global.__FIREBASE_ADMIN_LOGGED && isInitialized) {
+  if (db) {
+    console.log("[Firebase Admin] Firestore connected");
+  } else {
+    console.log("[Firebase Admin] Auth initialized (Firestore in local file/offline mode)");
+  }
   global.__FIREBASE_ADMIN_LOGGED = true;
 }
 
@@ -214,10 +236,14 @@ async function performSelfTest() {
   
   try {
     // Lightweight Firestore test
-    const firestoreStartTime = Date.now();
-    await db.collection('_system_health_').limit(1).get();
-    testResults.firestore = 'connected';
-    testResults.firestoreDurationMs = Date.now() - firestoreStartTime;
+    if (db) {
+      const firestoreStartTime = Date.now();
+      await db.collection('_system_health_').limit(1).get();
+      testResults.firestore = 'connected';
+      testResults.firestoreDurationMs = Date.now() - firestoreStartTime;
+    } else {
+      testResults.firestore = 'skipped (no credentials)';
+    }
   } catch (err) {
     console.warn('⚠️ [Firebase Admin] Firestore self-test failed:', err.message);
     testResults.firestore = 'failed';

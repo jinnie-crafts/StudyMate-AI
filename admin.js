@@ -4,6 +4,8 @@ import { collection, doc, setDoc, getDocs, deleteDoc, query, orderBy, serverTime
 import { sendAdminNotification } from "./services/notificationService.js";
 import { initSignupLogs } from "./adminSignupLogs.js";
 import { initSecurityLogs } from "./adminSecurityLogs.js";
+import { initModelRegistry } from "./adminModelRegistry.js";
+import { adminFetch } from "./adminAuthHelper.js";
 
 // â”€â”€ DOM Elements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const dom = {
@@ -117,6 +119,7 @@ const setupUI = () => {
   // Initialize all tab modules
   initSignupLogs();
   initSecurityLogs();
+  initModelRegistry();
 
   dom.tabBtns.forEach(btn => {
     btn.addEventListener("click", () => {
@@ -657,12 +660,22 @@ const API_BASE_URL = (window.location.hostname === "localhost" || window.locatio
   ? (window.location.port === "3000" || window.location.port === "5500" ? "http://localhost:3001" : "")
   : (window.location.hostname.includes("onrender.com") ? "" : "https://api.aadirishi.in");
 
+let isKbInitialized = false;
+let isLoadingKb = false;
+let pendingKbPromise = null;
+
 const initKbSystem = () => {
   if (!kbDom.form) return;
+  if (isKbInitialized) {
+    if (kbEntries.length === 0) fetchKbEntries();
+    return;
+  }
+  isKbInitialized = true;
+
   kbDom.form.addEventListener("submit", handleKbSubmit);
   kbDom.clearBtn.addEventListener("click", clearKbForm);
   kbDom.syncBtn.addEventListener("click", syncKbToFirestore);
-  kbDom.category.addEventListener("change", fetchKbEntries);
+  kbDom.category.addEventListener("change", () => fetchKbEntries(true));
   
   // Expose to window for inline onclicks
   window.editKbEntry = editKbEntry;
@@ -671,52 +684,66 @@ const initKbSystem = () => {
   fetchKbEntries();
 };
 
-const getAuthHeaders = async () => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
-  const token = await auth.currentUser.getIdToken();
-  return {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${token}`
-  };
-};
-
-const fetchKbEntries = async () => {
-  try {
-    console.log("Loading Knowledge...");
-    console.log(`[KB] Fetching entries from ${API_BASE_URL}/api/kb`);
-    const headers = await getAuthHeaders();
-    const res = await fetch(`${API_BASE_URL}/api/kb`, { headers });
-    
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Server returned ${res.status}: ${text.substring(0, 100)}`);
-    }
-
-    const contentType = res.headers.get("content-type");
-    if (!contentType || !contentType.includes("application/json")) {
-      throw new Error(`Expected JSON but received: ${contentType}`);
-    }
-
-    const data = await res.json();
-    console.log("[KB] Successfully loaded knowledge entries");
-    
-    // Flatten entries for easy rendering and searching
-    kbEntries = [];
-    if (Array.isArray(data)) {
-      data.forEach(cat => {
-        if (cat && Array.isArray(cat.entries)) {
-          cat.entries.forEach(e => {
-            kbEntries.push({ ...e, filename: cat.filename });
-          });
-        }
-      });
-    }
-    
-    renderKbEntries();
-  } catch(e) {
-    console.error("[KB] Failed to fetch KB", e);
-    kbDom.list.innerHTML = `<div style="text-align:center; color: #e74c3c;">Failed to load KB: ${escapeHtml(e.message)}</div>`;
+const fetchKbEntries = async (forceRefresh = false) => {
+  if (isLoadingKb && pendingKbPromise) {
+    return pendingKbPromise;
   }
+
+  if (kbEntries.length > 0 && !forceRefresh) {
+    renderKbEntries();
+    return;
+  }
+
+  isLoadingKb = true;
+  pendingKbPromise = (async () => {
+    try {
+      console.log("Loading Knowledge...");
+      console.log(`[KB] Fetching entries via adminFetch`);
+      const res = await adminFetch("/api/admin/kb");
+      
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error("Authentication session expired or invalid. Please sign in again.");
+        } else if (res.status === 403) {
+          throw new Error("Forbidden: Requires administrator privileges.");
+        } else if (res.status === 429) {
+          throw new Error("Too many KB requests. Rate limit active, please wait.");
+        }
+        const text = await res.text().catch(() => "");
+        throw new Error(`Server returned ${res.status}: ${text.substring(0, 100)}`);
+      }
+
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error(`Expected JSON but received: ${contentType}`);
+      }
+
+      const data = await res.json();
+      console.log("[KB] Successfully loaded knowledge entries");
+      
+      // Flatten entries for easy rendering and searching
+      kbEntries = [];
+      if (Array.isArray(data)) {
+        data.forEach(cat => {
+          if (cat && Array.isArray(cat.entries)) {
+            cat.entries.forEach(e => {
+              kbEntries.push({ ...e, filename: cat.filename });
+            });
+          }
+        });
+      }
+      
+      renderKbEntries();
+    } catch(e) {
+      console.error("[KB] Failed to fetch KB", e);
+      kbDom.list.innerHTML = `<div style="text-align:center; color: #e74c3c; padding: 20px;">Failed to load KB: ${escapeHtml(e.message)}</div>`;
+    } finally {
+      isLoadingKb = false;
+      pendingKbPromise = null;
+    }
+  })();
+
+  return pendingKbPromise;
 };
 
 const renderKbEntries = () => {
@@ -791,11 +818,9 @@ const handleKbSubmit = async (e) => {
   kbDom.saveBtn.innerHTML = `<span>Saving...</span>`;
 
   try {
-    console.log(`[KB] Saving entry to ${API_BASE_URL}/api/kb/entry`);
-    const headers = await getAuthHeaders();
-    const res = await fetch(`${API_BASE_URL}/api/kb/entry`, {
+    console.log(`[KB] Saving entry via adminFetch`);
+    const res = await adminFetch("/api/admin/kb/entry", {
       method: "POST",
-      headers,
       body: JSON.stringify(payload)
     });
     
@@ -806,7 +831,7 @@ const handleKbSubmit = async (e) => {
     
     showToast("KB Entry saved successfully!");
     clearKbForm();
-    await fetchKbEntries();
+    await fetchKbEntries(true);
   } catch(err) {
     console.error("[KB] Error saving entry:", err);
     showToast(`Error saving KB entry: ${err.message}`, "error");
@@ -820,11 +845,9 @@ const deleteKbEntry = async (filename, id) => {
   if (!confirm(`Are you sure you want to delete KB entry: ${id}?`)) return;
 
   try {
-    console.log(`[KB] Deleting entry ${id} from ${API_BASE_URL}/api/kb/entry`);
-    const headers = await getAuthHeaders();
-    const res = await fetch(`${API_BASE_URL}/api/kb/entry`, {
+    console.log(`[KB] Deleting entry ${id} via adminFetch`);
+    const res = await adminFetch("/api/admin/kb/entry", {
       method: "DELETE",
-      headers,
       body: JSON.stringify({ filename, id })
     });
     
@@ -835,7 +858,7 @@ const deleteKbEntry = async (filename, id) => {
     
     showToast("KB Entry deleted!");
     if (kbDom.entryId.value === id) clearKbForm();
-    await fetchKbEntries();
+    await fetchKbEntries(true);
   } catch(err) {
     console.error("[KB] Error deleting entry:", err);
     showToast(`Error deleting KB entry: ${err.message}`, "error");
@@ -848,10 +871,8 @@ const syncKbToFirestore = async () => {
   console.log("[KB] Firestore Sync Started");
 
   try {
-    const headers = await getAuthHeaders();
-    const res = await fetch(`${API_BASE_URL}/api/kb/sync`, {
-      method: "POST",
-      headers
+    const res = await adminFetch("/api/admin/kb/sync", {
+      method: "POST"
     });
     
     if (!res.ok) {
@@ -862,7 +883,7 @@ const syncKbToFirestore = async () => {
     const data = await res.json();
     console.log(`[KB] Firestore Sync Success: ${data.count} entries`);
     showToast(`Synced ${data.count} entries to Firestore!`, "success");
-    await fetchKbEntries();
+    await fetchKbEntries(true);
   } catch(err) {
     console.error("[KB] Firestore Sync Failed:", err);
     showToast(`Sync failed: ${err.message}`, "error");
@@ -873,5 +894,9 @@ const syncKbToFirestore = async () => {
 };
 
 // ── Startup ──────────────────────────────────────────────────────────────────
+window.addEventListener("admin-session-expired", (e) => {
+  showToast(e.detail?.message || "Session expired. Please sign in again.", "error");
+});
+
 initAuth();
 

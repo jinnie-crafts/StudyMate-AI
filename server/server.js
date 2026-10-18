@@ -24,6 +24,7 @@ const memoryRunner = require("./memory/memoryRunner"); // Memory System Integrat
 const kbRoutes = require("./routes/kb"); // Knowledge Base Admin API
 const { checkSecurity } = require("./services/security"); // Pre-LLM Security Guardrail
 const { requireAuth } = require("./services/authMiddleware"); // Firebase Auth Middleware
+const modelRegistry = require("./services/modelRegistry"); // Centralized AI Model Registry
 
 if (!process.env.OPENROUTER_API_KEY) {
   log.fatal("CRITICAL: Missing OPENROUTER_API_KEY in environment.");
@@ -61,10 +62,10 @@ const PROBE_INTERVAL_MS = 10000;
 
 let lastIdentityIndex = -1;
 const IDENTITY_RESPONSES = [
-  "StudyMate-AI is developed by Harsh Maurya and Komal Sharma.",
-  "This application is created by Harsh Maurya and Komal Sharma.",
-  "Harsh Maurya and Komal Sharma are the developers of StudyMate-AI.",
-  "StudyMate-AI is built by Harsh Maurya and Komal Sharma."
+  "StudyMate-AI is developed by Harsh Maurya, Komal Sharma and Ruchii.",
+  "This application is created by Harsh Maurya, Komal Sharma and Ruchii.",
+  "Harsh Maurya, Komal Sharma and Ruchii are the developers of StudyMate-AI.",
+  "StudyMate-AI is built by Harsh Maurya, Komal Sharma and Ruchii."
 ];
 const REALTIME_CACHE_TTL_MS = 5 * 60 * 1000;
 const IDENTITY_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -168,7 +169,7 @@ const chatLimiter = rateLimit({
 
 const kbLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many KB requests. Please slow down.' }
@@ -176,7 +177,7 @@ const kbLimiter = rateLimit({
 
 const adminLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 5,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many admin requests. Please slow down.' }
@@ -185,6 +186,7 @@ const adminLimiter = rateLimit({
 // 6. Apply rate limiters and auth middleware to routes
 const { verifyAdmin: kbVerifyAdmin } = require('./services/authMiddleware');
 app.use("/api/kb", kbLimiter, kbVerifyAdmin, kbRoutes);
+app.use("/api/admin/kb", kbLimiter, kbVerifyAdmin, kbRoutes);
 app.use("/api/admin", adminLimiter, require("./routes/admin"));
 
 // 7. Safe Static file serving — Whitelist allowed files and directories (VULN-05)
@@ -197,6 +199,7 @@ const ALLOWED_STATIC_FILES = new Set([
   'app.js', 'admin.js', 'verify.js', 'recover.js', 'reset.js', '404.js',
   'style.css', 'skeleton.css', 'admin.css', 'notification.css',
   'notificationBell.js', 'disposableEmailValidator.js', 'adminSecurityLogs.js', 'adminSignupLogs.js',
+  'spaNavigation.js', 'modelRegistryClient.js', 'adminModelRegistry.js', 'adminAuthHelper.js',
   'faq.json', 'features.json', 'knowledge.json', 'firebase.js'
 ]);
 
@@ -267,6 +270,33 @@ app.get("/api/health", async (_req, res) => {
     version: process.env.npm_package_version || "1.0.0",
     timestamp: new Date().toISOString()
   });
+});
+
+// Public Model Registry endpoint (consumed by Settings and dynamic client selectors)
+app.get("/api/models", async (req, res) => {
+  try {
+    const role = req.query.role || null;
+    const models = await modelRegistry.getAllModels({ enabledOnly: true });
+    const sanitized = models
+      .filter(m => !role || (Array.isArray(m.roles) && m.roles.includes(role)))
+      .map(m => ({
+        internal_key: m.internal_key,
+        display_name: m.display_name,
+        provider_id: m.provider_id,
+        description: m.description,
+        capabilities: m.capabilities,
+        roles: m.roles,
+        is_default: m.is_default,
+        fallback_priority: m.fallback_priority
+      }));
+    res.json({
+      models: sanitized,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    log.error({ err }, "GET /api/models error");
+    res.status(500).json({ error: "Failed to load model registry" });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -352,8 +382,14 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
       intent = "CODING";
     }
 
-    // 5. Select model
-    const selectedModel = selectModel(intent);
+    // 5. Select model & authoritative role from Model Registry
+    let modelRole = "general_chat";
+    if (normalizedMode === "coding") modelRole = "coding_assistant";
+    else if (normalizedMode === "exam") modelRole = "exam_revision";
+
+    const userModelChoice = req.body.model_choice || req.body.model || null;
+    const authoritativeChain = await modelRegistry.buildCandidateChain(modelRole, userModelChoice);
+    const selectedModel = authoritativeChain[0] || selectModel(intent);
 
     // 6. Check cache (with bypass logic)
     // --- RAG Integration: Use classifier to determine if retrieval is needed ---
@@ -442,9 +478,9 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
 
     finalMessages.push({ role: "user", content: latestUserMessage });
 
-    // 6. Build model chain with cooldown awareness
+    // 6. Build model chain with cooldown awareness from Centralized Registry
     const now = Date.now();
-    let candidateChain = buildModelCandidates(selectedModel).filter(model => {
+    let candidateChain = authoritativeChain.filter(model => {
       const record = failureTracker.get(model);
       if (record && now < record.expiry) {
         const remainingStr = ((record.expiry - now) / 1000).toFixed(1);
@@ -456,7 +492,7 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
 
     if (candidateChain.length === 0) {
       if (now - lastProbeTime > PROBE_INTERVAL_MS) {
-        const fullChain = buildModelCandidates(selectedModel);
+        const fullChain = authoritativeChain;
         let eligibleProbe = null;
         for (const m of fullChain) {
            const record = failureTracker.get(m);
@@ -925,8 +961,9 @@ ${sanitizedMessage}
 `;
 
   try {
+    const classifierModel = (await modelRegistry.resolveModelForRole("fast_classifier"))?.provider_id || IDENTITY_CLASSIFIER_MODEL;
     const result = await fetchWithRetry(
-      () => callAIModel(apiKey, IDENTITY_CLASSIFIER_MODEL, [{ role: "user", content: prompt }]),
+      () => callAIModel(apiKey, classifierModel, [{ role: "user", content: prompt }]),
       1
     );
     return String(result).trim().toUpperCase().includes("YES");
@@ -964,10 +1001,10 @@ async function callAIModel(apiKey, model, messages) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000); // Strict 8s timeout
 
-  // PRE-FLIGHT SAFETY CHECK (CRITICAL: 100% Free enforcement)
-  const isAuthorized = MODEL_POOL.includes(model) && model.endsWith(":free");
+  // PRE-FLIGHT SAFETY CHECK (CRITICAL: 100% Free enforcement & Authoritative Registry)
+  const isAuthorized = model === IDENTITY_CLASSIFIER_MODEL || await modelRegistry.isAuthorizedModel(model) || (MODEL_POOL.includes(model) && model.endsWith(":free"));
   if (!isAuthorized) {
-    throw new Error(`CRITICAL BLOCKED: Model ${model} is not authorized or not free.`);
+    throw new Error(`CRITICAL BLOCKED: Model ${model} is not authorized in Model Registry or not free.`);
   }
 
   try {

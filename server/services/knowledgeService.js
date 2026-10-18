@@ -19,7 +19,9 @@ class KnowledgeService {
       "chat": ["assistant", "bot", "talk", "speak"]
     };
     // Load once on startup
-    this.loadKB();
+    this.loadKB().catch(err => {
+      console.warn("[KnowledgeService] Error loading knowledge base:", err.message);
+    });
   }
 
   async loadKB() {
@@ -28,8 +30,9 @@ class KnowledgeService {
     this.categories = [];
 
     try {
-      // 1. Try Firestore First
-      const snapshot = await db.collection("knowledge").get();
+      // 1. Try Firestore First (if Firestore is initialized with GCP credentials)
+      if (db && typeof db.collection === 'function') {
+        const snapshot = await db.collection("knowledge").get();
       
       if (!snapshot.empty) {
         console.log("Firestore Read Success");
@@ -72,9 +75,9 @@ class KnowledgeService {
         
         // Export snapshot to local JSON
         this.exportToLocalJson(grouped);
-        return;
-      } else {
-        console.log("Firestore Read Success but empty.");
+        } else {
+          console.log("Firestore Read Success but empty.");
+        }
       }
     } catch (e) {
       console.log("Firestore Read Failed", e.message);

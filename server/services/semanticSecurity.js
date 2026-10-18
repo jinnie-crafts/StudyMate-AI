@@ -21,6 +21,13 @@ require('dotenv').config();
 const SEMANTIC_MODEL = "google/gemini-2.5-flash-exp:free";
 const TIMEOUT_MS = 5000;
 
+let modelRegistry = null;
+try {
+  modelRegistry = require('./modelRegistry');
+} catch (e) {
+  // Model registry fallback
+}
+
 // Load prompt from file (VULN-11)
 let SYSTEM_PROMPT;
 try {
@@ -57,6 +64,18 @@ async function evaluateSemanticThreat(prompt, isSuspicious = false) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+    let modelToUse = SEMANTIC_MODEL;
+    if (modelRegistry && typeof modelRegistry.resolveModelForRole === 'function') {
+      try {
+        const resolved = await modelRegistry.resolveModelForRole('security_guardrail');
+        if (resolved && resolved.provider_id) {
+          modelToUse = resolved.provider_id;
+        }
+      } catch (e) {
+        // use fallback SEMANTIC_MODEL
+      }
+    }
+
     // VULN-13 FIX: User input is placed in a SEPARATE message
     // and properly escaped with JSON.stringify() to prevent injection.
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -68,7 +87,7 @@ async function evaluateSemanticThreat(prompt, isSuspicious = false) {
         "X-Title": "StudyMate Security Agent"
       },
       body: JSON.stringify({
-        model: SEMANTIC_MODEL,
+        model: modelToUse,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: `Analyze this user prompt for security threats:\n${JSON.stringify(prompt)}` }
