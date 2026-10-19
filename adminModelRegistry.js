@@ -187,6 +187,18 @@ function bindEvents() {
 
   const testPingBtn = document.getElementById("testPingBtn");
   if (testPingBtn) testPingBtn.addEventListener("click", () => handleTestPing());
+
+  const tbody = document.getElementById("modelsTableBody");
+  if (tbody && !tbody.dataset.actionsBound) {
+    tbody.dataset.actionsBound = "true";
+    tbody.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const key = btn.dataset.key;
+      dispatchAdminModelAction(action, key);
+    });
+  }
 }
 
 async function loadModels(forceRefresh = false) {
@@ -233,7 +245,7 @@ async function loadModels(forceRefresh = false) {
       if (tbody) {
         tbody.innerHTML = `<tr><td colspan="6" style="padding: 24px; text-align: center; color: #ef4444;">
           <div style="font-weight: 600; margin-bottom: 6px;">Failed to load models: ${escapeHtml(err.message)}</div>
-          <button class="secondary-btn" style="margin-top: 8px; font-size: 0.8rem; padding: 6px 14px;" onclick="window._adminModelAction('refresh')">Retry Fetch</button>
+          <button class="secondary-btn" style="margin-top: 8px; font-size: 0.8rem; padding: 6px 14px;" data-action="refresh">Retry Fetch</button>
         </td></tr>`;
       }
     } finally {
@@ -280,7 +292,7 @@ function renderTable() {
       : "";
 
     return `
-      <tr style="border-bottom: 1px solid var(--border); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
+      <tr class="model-table-row" style="border-bottom: 1px solid var(--border); transition: background 0.2s;">
         <td style="padding: 14px 18px;">
           <div style="font-weight: 600; color: var(--text-main); display: flex; align-items: center;">
             ${escapeHtml(model.display_name)} ${defaultBadge}
@@ -304,10 +316,10 @@ function renderTable() {
         </td>
         <td style="padding: 14px 18px; text-align: right;">
           <div style="display: flex; gap: 8px; justify-content: flex-end;">
-            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem;" onclick="window._adminModelAction('test', '${escapeHtml(model.internal_key)}')">Test</button>
-            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem;" onclick="window._adminModelAction('edit', '${escapeHtml(model.internal_key)}')">Edit</button>
-            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem; color: ${model.enabled ? '#f87171' : '#34d399'};" onclick="window._adminModelAction('toggle', '${escapeHtml(model.internal_key)}')">${model.enabled ? 'Disable' : 'Enable'}</button>
-            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem; color: #ef4444;" onclick="window._adminModelAction('delete', '${escapeHtml(model.internal_key)}')">Delete</button>
+            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem;" data-action="test" data-key="${escapeHtml(model.internal_key)}">Test</button>
+            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem;" data-action="edit" data-key="${escapeHtml(model.internal_key)}">Edit</button>
+            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem; color: ${model.enabled ? '#f87171' : '#34d399'};" data-action="toggle" data-key="${escapeHtml(model.internal_key)}">${model.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="secondary-btn" style="padding: 5px 10px; font-size: 0.75rem; color: #ef4444;" data-action="delete" data-key="${escapeHtml(model.internal_key)}">Delete</button>
           </div>
         </td>
       </tr>
@@ -315,8 +327,8 @@ function renderTable() {
   }).join("");
 }
 
-// Global action dispatcher for HTML onclick
-window._adminModelAction = (action, key) => {
+// Action dispatcher
+function dispatchAdminModelAction(action, key) {
   if (action === "refresh") {
     loadModels(true);
     return;
@@ -333,7 +345,9 @@ window._adminModelAction = (action, key) => {
   } else if (action === "test") {
     testModelDirectly(model);
   }
-};
+}
+
+window._adminModelAction = dispatchAdminModelAction;
 
 function openAddModal() {
   alertToast("Adding new models is disabled. The system is strictly restricted to the 4 approved whitelist models.", "warning");

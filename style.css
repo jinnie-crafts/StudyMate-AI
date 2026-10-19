@@ -177,6 +177,37 @@ body[data-page="settings"] {
   overflow-x: hidden;
 }
 
+body[data-page="legal"] {
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* SPA View Layering & Isolation */
+.spa-hidden,
+body[data-page="settings"] #app,
+body[data-page="settings"] .app-container,
+body[data-page="legal"] #app,
+body[data-page="legal"] .app-container {
+  display: none !important;
+}
+
+body[data-page="dashboard"] #spaSettingsMount,
+body[data-page="dashboard"] #spaLegalMount,
+body[data-page="dashboard"] > .settings-shell,
+body[data-page="dashboard"] > .legal-container {
+  display: none !important;
+}
+
+body[data-page="settings"] #spaSettingsMount,
+body[data-page="settings"] > .settings-shell {
+  display: block !important;
+}
+
+body[data-page="legal"] #spaLegalMount,
+body[data-page="legal"] > .legal-container {
+  display: block !important;
+}
+
 button,
 input,
 textarea,
@@ -1584,10 +1615,12 @@ a:hover {
 }
 
 .send-icon {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-  filter: brightness(0) invert(1);
+  width: 18px;
+  height: 18px;
+  stroke: #ffffff;
+  fill: none;
+  display: block;
+  transform: translate(1px, -1px);
 }
 
 /* Let the bottom auto-scroll element stay out of sight */
@@ -2447,9 +2480,9 @@ select,
 /* Replaced by refined sidebar logic in media queries */
 
 .app-container {
-  display: flex !important;
-  height: 100dvh !important;
-  overflow: hidden !important;
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .app-shell {

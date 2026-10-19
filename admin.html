@@ -507,21 +507,7 @@
       </div>
     </div> <!-- End Signup Logs Tab -->
 
-  </main>
-
-  <!-- Delete Confirmation Modal -->
-  <div id="deleteConfirmModal" class="skeleton-overlay" style="display: none; align-items: center; justify-content: center; z-index: 9999;">
-    <div class="glass-card" style="max-width: 400px; width: 90%; text-align: center; padding: 32px;">
-      <h2 style="color: var(--text-main); margin-bottom: 12px;">Delete Changelog?</h2>
-      <p style="color: var(--text-soft); margin-bottom: 24px;">This action cannot be undone. Are you sure you want to permanently delete this entry?</p>
-      <div style="display: flex; gap: 12px; justify-content: center;">
-        <button id="cancelDeleteBtn" class="admin-send-btn" style="background: rgba(255,255,255,0.1); color: var(--text-main);">Cancel</button>
-        <button id="confirmDeleteBtn" class="admin-send-btn" style="background: #e74c3c; color: white;">Delete</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="admin-tab-content" id="tab-securitylogs">
+    <div class="admin-tab-content" id="tab-securitylogs">
     <header class="admin-header">
       <h1>Security & Threat Intelligence</h1>
       <p>Audit trail of intercepted privileged operations and real-time threat analysis.</p>
@@ -619,6 +605,20 @@
 
   <div class="admin-tab-content" id="tab-models">
     <!-- Populated dynamically by adminModelRegistry.js -->
+  </div>
+
+  </main>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="deleteConfirmModal" class="skeleton-overlay" style="display: none; align-items: center; justify-content: center; z-index: 9999;">
+    <div class="glass-card" style="max-width: 400px; width: 90%; text-align: center; padding: 32px;">
+      <h2 style="color: var(--text-main); margin-bottom: 12px;">Delete Changelog?</h2>
+      <p style="color: var(--text-soft); margin-bottom: 24px;">This action cannot be undone. Are you sure you want to permanently delete this entry?</p>
+      <div style="display: flex; gap: 12px; justify-content: center;">
+        <button id="cancelDeleteBtn" class="admin-send-btn" style="background: rgba(255,255,255,0.1); color: var(--text-main);">Cancel</button>
+        <button id="confirmDeleteBtn" class="admin-send-btn" style="background: #e74c3c; color: white;">Delete</button>
+      </div>
+    </div>
   </div>
 
   <!-- Log Detail Modal -->

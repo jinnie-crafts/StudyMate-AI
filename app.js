@@ -2512,6 +2512,34 @@ async function generateAssistantReply({ chat, apiMessages = null, userContent = 
     console.error("Reply error:", err);
     state.showTypingIndicator = false;
     showToast(err.message || "Failed to get AI response", "error");
+
+    // Preserve the user's prompt so they don't lose their draft input!
+    if (userContent && ui.userInput && !ui.userInput.value) {
+      ui.userInput.value = userContent;
+      autoResizeTextarea(ui.userInput);
+    }
+
+    const errorExplanation = err.message || "The AI service is currently unavailable. Please check server configuration.";
+    const errorBubble = `⚠️ **Unable to complete response**\n\n${errorExplanation}`;
+
+    if (state.isGuestMode) {
+      const errMsg = createGuestMessage("ai", errorBubble, []);
+      errMsg.isError = true;
+      chat.messages.push(errMsg);
+      chat.updatedAt = Timestamp.now();
+    } else {
+      try {
+        await addDoc(collection(db, "chats", chat.id, "messages"), {
+          role: "ai",
+          content: errorBubble,
+          isError: true,
+          createdAt: serverTimestamp()
+        });
+        await updateDoc(doc(db, "chats", chat.id), { updatedAt: serverTimestamp() });
+      } catch (dbErr) {
+        chat.messages.push({ role: "ai", content: errorBubble, isError: true, id: "err-" + Date.now() });
+      }
+    }
   } finally {
     state.isSending = false;
     setComposerLoading(false);
@@ -2610,7 +2638,11 @@ async function streamAssistantMessage(chatId, source, controller = null) {
 
         try {
           const data = JSON.parse(dataStr);
-          if (data.content) {
+          if (data.error) {
+            state.showTypingIndicator = false;
+            accumulatedText = `⚠️ **Error receiving response:** ${data.error}`;
+            break;
+          } else if (data.content) {
             if (state.showTypingIndicator) state.showTypingIndicator = false;
             accumulatedText += data.content;
             state.streamingResponse.visibleText = accumulatedText;
@@ -2627,7 +2659,7 @@ async function streamAssistantMessage(chatId, source, controller = null) {
   } finally {
     stopStreamingResponse();
     // Handle graceful completion if stream was empty or broken
-    if (!accumulatedText || accumulatedText.length < 10) {
+    if (!accumulatedText || (accumulatedText.length < 10 && !accumulatedText.includes("Error"))) {
       accumulatedText = (accumulatedText || "") + "\n\n" + generateSafeFallbackReply();
     }
     renderMessages();

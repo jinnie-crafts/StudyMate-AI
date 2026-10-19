@@ -126,7 +126,13 @@ const setupUI = () => {
       dom.tabBtns.forEach(b => b.classList.remove("active"));
       dom.tabContents.forEach(c => c.classList.remove("active"));
       btn.classList.add("active");
-      document.getElementById(btn.dataset.tab).classList.add("active");
+      const targetTab = document.getElementById(btn.dataset.tab);
+      if (targetTab) {
+        targetTab.classList.add("active");
+      }
+      if (btn.dataset.tab === "tab-models") {
+        initModelRegistry();
+      }
     });
   });
 

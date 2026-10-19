@@ -364,19 +364,45 @@ class SPANavigationManager {
     let legalMount = document.getElementById("spaLegalMount");
 
     if (viewRecord.dataPage === "dashboard") {
-      if (nativeSettings) nativeSettings.style.display = "none";
-      if (settingsMount) settingsMount.style.display = "none";
-      if (legalMount) legalMount.style.display = "none";
+      if (nativeSettings) {
+        nativeSettings.classList.add("spa-hidden");
+        nativeSettings.style.setProperty("display", "none", "important");
+      }
+      if (settingsMount) {
+        settingsMount.classList.add("spa-hidden");
+        settingsMount.style.setProperty("display", "none", "important");
+      }
+      if (legalMount) {
+        legalMount.classList.add("spa-hidden");
+        legalMount.style.setProperty("display", "none", "important");
+      }
 
       if (existingApp) {
-        existingApp.style.display = "";
+        existingApp.classList.remove("spa-hidden");
+        existingApp.style.removeProperty("display");
+      } else {
+        const mount = document.createElement("div");
+        mount.innerHTML = viewRecord.html;
+        const appElem = mount.querySelector("#app") || mount.querySelector(".app-container") || mount.firstElementChild;
+        if (appElem) {
+          document.body.appendChild(appElem);
+        } else {
+          document.body.innerHTML = viewRecord.html;
+        }
       }
     } else if (viewRecord.dataPage === "settings") {
-      if (existingApp) existingApp.style.display = "none";
-      if (legalMount) legalMount.style.display = "none";
+      if (existingApp) {
+        existingApp.classList.add("spa-hidden");
+        existingApp.style.setProperty("display", "none", "important");
+      }
+      if (legalMount) {
+        legalMount.classList.add("spa-hidden");
+        legalMount.style.setProperty("display", "none", "important");
+      }
 
       if (nativeSettings) {
-        nativeSettings.style.display = "";
+        nativeSettings.classList.remove("spa-hidden");
+        nativeSettings.style.removeProperty("display");
       } else {
         if (!settingsMount) {
           settingsMount = document.createElement("div");
@@ -384,22 +410,33 @@ class SPANavigationManager {
           settingsMount.innerHTML = viewRecord.html;
           document.body.appendChild(settingsMount);
         } else {
-          settingsMount.style.display = "";
+          settingsMount.classList.remove("spa-hidden");
+          settingsMount.style.removeProperty("display");
           settingsMount.innerHTML = viewRecord.html;
         }
       }
     } else {
       // Legal or other pages
-      if (existingApp) existingApp.style.display = "none";
-      if (nativeSettings) nativeSettings.style.display = "none";
-      if (settingsMount) settingsMount.style.display = "none";
+      if (existingApp) {
+        existingApp.classList.add("spa-hidden");
+        existingApp.style.setProperty("display", "none", "important");
+      }
+      if (nativeSettings) {
+        nativeSettings.classList.add("spa-hidden");
+        nativeSettings.style.setProperty("display", "none", "important");
+      }
+      if (settingsMount) {
+        settingsMount.classList.add("spa-hidden");
+        settingsMount.style.setProperty("display", "none", "important");
+      }
 
       if (!legalMount) {
         legalMount = document.createElement("div");
         legalMount.id = "spaLegalMount";
         document.body.appendChild(legalMount);
       }
-      legalMount.style.display = "";
+      legalMount.classList.remove("spa-hidden");
+      legalMount.style.removeProperty("display");
       legalMount.innerHTML = viewRecord.html;
 
       // Bind back button navigation
