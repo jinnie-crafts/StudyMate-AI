@@ -29,7 +29,7 @@
             </div>
 
             <div id="success-actions" style="display:none; margin-top:30px;">
-                <button id="backBtn" onclick="goBack()" class="primary-btn">Back to Login</button>
+                <button id="backBtn" class="primary-btn">Back to Login</button>
             </div>
         </main>
     </section>
@@ -46,22 +46,6 @@
         .error-text { color: #ef4444; font-weight: 600; }
     </style>
 
-    <script>
-        function goBack() {
-          if (document.referrer && document.referrer !== window.location.href) {
-            window.history.back();
-          } else {
-            window.location.href = "/login";
-          }
-        }
-
-        window.addEventListener('DOMContentLoaded', () => {
-          const backBtn = document.getElementById('backBtn');
-          if (backBtn) {
-            backBtn.textContent = document.referrer ? "← Back" : "← Go to Login";
-          }
-        });
-    </script>
     <script type="module" src="recover.js"></script>
 </body>
 </html>

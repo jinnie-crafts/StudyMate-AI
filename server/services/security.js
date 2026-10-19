@@ -45,7 +45,7 @@ function heuristicCheck(text) {
 
 // Calculate dynamic rolling score from active events
 async function getRollingThreatScore(userId) {
-  if (!userId || userId === 'anonymous') return 0;
+  if (!userId || userId === 'anonymous' || !db) return 0;
   
   const windowStart = new Date();
   windowStart.setHours(windowStart.getHours() - config.THREAT_WINDOW_HOURS);

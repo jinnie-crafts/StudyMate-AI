@@ -114,11 +114,11 @@
   </style>
 </head>
 
-<body class="legal-page">
+<body class="legal-page" data-page="legal">
   <div class="legal-container glass-card">
-    <button id="backBtn" onclick="goBack()" class="back-link"
+    <button id="backBtn" class="back-link"
       style="background: none; border: none; cursor: pointer; font-family: inherit; font-size: inherit; padding: 0;">←
-      Back to Login</button>
+      Back</button>
 
     <header class="legal-header">
       <img src="img/study-mate.png" class="legal-logo" alt="StudyMate AI Logo" />
@@ -217,22 +217,7 @@
     </footer>
   </div>
 
-  <script>
-    function goBack() {
-      if (document.referrer && document.referrer !== window.location.href) {
-        window.history.back();
-      } else {
-        window.location.href = "/login";
-      }
-    }
-
-    window.addEventListener('DOMContentLoaded', () => {
-      const backBtn = document.getElementById('backBtn');
-      if (backBtn) {
-        backBtn.textContent = document.referrer ? "← Back" : "← Go to Login";
-      }
-    });
-  </script>
+  <script type="module" src="legal.js"></script>
 </body>
 
 </html>

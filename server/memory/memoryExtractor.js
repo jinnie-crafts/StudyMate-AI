@@ -4,15 +4,9 @@
  * Analyzes recent chat messages to extract structured, persistent facts
  * and user preferences for the conversational memory system.
  */
-const EXTRACTOR_MODEL = "google/gemma-4-31b-it:free"; // Fast model for internal tasks
 const EXTRACTION_TIMEOUT_MS = 6000;
-
-let modelRegistry = null;
-try {
-  modelRegistry = require('../services/modelRegistry');
-} catch (e) {
-  // Model registry fallback
-}
+const aiService = require('../services/aiService');
+const modelRegistry = require('../services/modelRegistry');
 
 /**
  * Extracts new memories from the latest user message and context.
@@ -53,47 +47,14 @@ Do not output any markdown code blocks (\`\`\`json) or other text. Just the raw 
   ];
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), EXTRACTION_TIMEOUT_MS);
-
-    let modelToUse = EXTRACTOR_MODEL;
-    if (modelRegistry && typeof modelRegistry.resolveModelForRole === 'function') {
-      try {
-        const resolved = await modelRegistry.resolveModelForRole('fast_classifier');
-        if (resolved && resolved.provider_id) {
-          modelToUse = resolved.provider_id;
-        }
-      } catch (e) {
-        // fallback to EXTRACTOR_MODEL
-      }
-    }
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://aadirishi.in/",
-        "X-Title": "StudyMate AI Internal"
-      },
-      body: JSON.stringify({
-        model: modelToUse,
-        messages: requestMessages,
-        provider: { allow_fallbacks: false },
-        temperature: 0.1
-      }),
-      signal: controller.signal
+    const result = await aiService.executeDirectCompletion({
+      role: 'fast_classifier',
+      messages: requestMessages,
+      temperature: 0.1,
+      timeoutMs: EXTRACTION_TIMEOUT_MS
     });
 
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      console.warn(`[MemoryExtractor] HTTP ${response.status} from OpenRouter`);
-      return [];
-    }
-
-    const data = await response.json();
-    let content = data?.choices?.[0]?.message?.content || "[]";
+    let content = result.content || "[]";
     
     // Clean up possible markdown wraps
     content = content.replace(/```json/gi, "").replace(/```/g, "").trim();

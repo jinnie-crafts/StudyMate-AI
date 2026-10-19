@@ -18,15 +18,9 @@ const log = loggers.security;
 
 require('dotenv').config();
 
-const SEMANTIC_MODEL = "google/gemini-2.5-flash-exp:free";
 const TIMEOUT_MS = 5000;
-
-let modelRegistry = null;
-try {
-  modelRegistry = require('./modelRegistry');
-} catch (e) {
-  // Model registry fallback
-}
+const aiService = require('./aiService');
+const modelRegistry = require('./modelRegistry');
 
 // Load prompt from file (VULN-11)
 let SYSTEM_PROMPT;
@@ -61,58 +55,19 @@ async function evaluateSemanticThreat(prompt, isSuspicious = false) {
   }
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-    let modelToUse = SEMANTIC_MODEL;
-    if (modelRegistry && typeof modelRegistry.resolveModelForRole === 'function') {
-      try {
-        const resolved = await modelRegistry.resolveModelForRole('security_guardrail');
-        if (resolved && resolved.provider_id) {
-          modelToUse = resolved.provider_id;
-        }
-      } catch (e) {
-        // use fallback SEMANTIC_MODEL
-      }
-    }
-
-    // VULN-13 FIX: User input is placed in a SEPARATE message
-    // and properly escaped with JSON.stringify() to prevent injection.
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://aadirishi.in/",
-        "X-Title": "StudyMate Security Agent"
-      },
-      body: JSON.stringify({
-        model: modelToUse,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: `Analyze this user prompt for security threats:\n${JSON.stringify(prompt)}` }
-        ],
-        temperature: 0.0,
-        max_tokens: 100,
-        response_format: { type: "json_object" }
-      }),
-      signal: controller.signal
+    const result = await aiService.executeDirectCompletion({
+      role: 'security_guardrail',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `Analyze this user prompt for security threats:\n${JSON.stringify(prompt)}` }
+      ],
+      temperature: 0.0,
+      maxTokens: 100,
+      responseFormat: { type: 'json_object' },
+      timeoutMs: TIMEOUT_MS
     });
 
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      log.warn({ status: response.status }, 'Semantic Security API returned non-OK');
-      // VULN-12 FIX: If the prompt was suspicious and API fails, fail CLOSED
-      if (isSuspicious) {
-        log.warn('Semantic API failed on suspicious prompt — failing closed');
-        return { isMalicious: true, category: 'SEMANTIC_UNAVAILABLE', score: 50, level: 'medium' };
-      }
-      return null;
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const content = result.content;
     if (!content) {
       if (isSuspicious) {
         return { isMalicious: true, category: 'SEMANTIC_EMPTY_RESPONSE', score: 50, level: 'medium' };

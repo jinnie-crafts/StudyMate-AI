@@ -31,7 +31,8 @@ import {
   serverTimestamp,
   deleteDoc,
   getDocs,
-  Timestamp
+  Timestamp,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { initNotifications, stopNotifications } from "./notificationBell.js";
 import { marked } from "https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js";
@@ -175,8 +176,8 @@ window.fetch = async function (...args) {
 // Constants
 // ---------------------------------------------------------------------------
 
-const API_BASE_URL = window.location.hostname === "localhost"
-  ? (window.location.port === "3000" ? "http://localhost:3001" : "")
+const API_BASE_URL = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ? (window.location.port === "3001" ? "" : `http://${window.location.hostname}:3001`)
   : (window.location.hostname.includes("onrender.com") ? "" : "https://api.aadirishi.in");
 
 const page = document.body.dataset.page;
@@ -792,7 +793,7 @@ function yesterdayString() { const d = new Date(); d.setDate(d.getDate() - 1); r
 // ---------------------------------------------------------------------------
 
 function initDashboardPage() {
-  ui = {
+  ui = Object.assign(ui || {}, {
     body: document.body,
     newChatBtn: document.getElementById("newChatBtn"),
     chatHistoryList: document.getElementById("chatHistoryList"),
@@ -832,7 +833,7 @@ function initDashboardPage() {
     changelogContent: document.getElementById("changelogContent"),
     changelogBackBtn: document.getElementById("changelogBackBtn"),
     changelogBtn: document.getElementById("changelogBtn")
-  };
+  });
 
   hideOnboardingOverlay();
   bindDashboardEvents();
@@ -1150,7 +1151,7 @@ async function handleStart() {
 // ---------------------------------------------------------------------------
 
 function initSettingsPage() {
-  ui = {
+  ui = Object.assign(ui || {}, {
     settingsNameInput: document.getElementById("settingsNameInput"),
     settingsEmailInput: document.getElementById("settingsEmailInput"),
     settingsAvatarUrlInput: document.getElementById("settingsAvatarUrlInput"),
@@ -1180,10 +1181,12 @@ function initSettingsPage() {
     downloadDataBtn: document.getElementById("downloadDataBtn"),
     deleteAccountBtn: document.getElementById("deleteAccountBtn"),
     googleAccountStatus: document.getElementById("googleAccountStatus")
-  };
+  });
 
   if (ui.aiModelSelect) {
-    populateModelSelect(ui.aiModelSelect, state.userSettings.aiModel, ui.aiModelDetailsContainer);
+    populateModelSelect(ui.aiModelSelect, state.userSettings?.aiModel || "auto", ui.aiModelDetailsContainer).catch(err => {
+      console.warn("[Settings] Model select populate failed:", err.message);
+    });
   }
 
   bindSettingsEvents();
@@ -1197,7 +1200,8 @@ function initSettingsPage() {
   // Helper: detect mobile breakpoint
   const isMobile = () => window.innerWidth <= 768;
 
-  if (nav) {
+  if (nav && !nav.dataset.settingsNavBound) {
+    nav.dataset.settingsNavBound = "true";
     const navItems = nav.querySelectorAll(".nav-item");
     const sections = document.querySelectorAll(".settings-card");
 
@@ -1285,22 +1289,27 @@ function initSettingsPage() {
   }
 }
 
+function bindSafeListener(element, eventType, handler) {
+  if (!element) return;
+  const boundAttr = `data-bound-${eventType}`;
+  if (element.hasAttribute(boundAttr)) return;
+  element.setAttribute(boundAttr, "true");
+  element.addEventListener(eventType, handler);
+}
+
 function bindSettingsEvents() {
-  if (ui._settingsEventsBound) return;
-  ui._settingsEventsBound = true;
+  if (ui.saveAccountBtn) bindSafeListener(ui.saveAccountBtn, "click", () => saveAccountProfile());
+  if (ui.changePasswordBtn) bindSafeListener(ui.changePasswordBtn, "click", () => handleInAppPasswordChange());
+  if (ui.logoutAllSessionsBtn) bindSafeListener(ui.logoutAllSessionsBtn, "click", () => confirmLogoutAll());
+  if (ui.fullLogoutBtn) bindSafeListener(ui.fullLogoutBtn, "click", () => confirmLogoutAll());
 
-  if (ui.saveAccountBtn) ui.saveAccountBtn.addEventListener("click", () => saveAccountProfile());
-  if (ui.changePasswordBtn) ui.changePasswordBtn.addEventListener("click", () => handleInAppPasswordChange());
-  if (ui.logoutAllSessionsBtn) ui.logoutAllSessionsBtn.addEventListener("click", () => confirmLogoutAll());
-  if (ui.fullLogoutBtn) ui.fullLogoutBtn.addEventListener("click", () => confirmLogoutAll());
-
-  if (ui.aiModelSelect) ui.aiModelSelect.addEventListener("change", () => saveUserSettings());
-  if (ui.aiStyleSelect) ui.aiStyleSelect.addEventListener("change", () => saveUserSettings());
-  if (ui.aiToneSelect) ui.aiToneSelect.addEventListener("change", () => saveUserSettings());
-  if (ui.autoQuestionToggle) ui.autoQuestionToggle.addEventListener("change", () => saveUserSettings());
+  if (ui.aiModelSelect) bindSafeListener(ui.aiModelSelect, "change", () => saveUserSettings());
+  if (ui.aiStyleSelect) bindSafeListener(ui.aiStyleSelect, "change", () => saveUserSettings());
+  if (ui.aiToneSelect) bindSafeListener(ui.aiToneSelect, "change", () => saveUserSettings());
+  if (ui.autoQuestionToggle) bindSafeListener(ui.autoQuestionToggle, "change", () => saveUserSettings());
 
   if (ui.themeSelector) {
-    ui.themeSelector.addEventListener("click", (e) => {
+    bindSafeListener(ui.themeSelector, "click", (e) => {
       const btn = e.target.closest(".theme-btn-card");
       if (!btn) return;
       setTheme(btn.dataset.theme);
@@ -1308,15 +1317,15 @@ function bindSettingsEvents() {
     });
   }
 
-  if (ui.appLanguageSelect) ui.appLanguageSelect.addEventListener("change", () => saveUserSettings());
+  if (ui.appLanguageSelect) bindSafeListener(ui.appLanguageSelect, "change", () => saveUserSettings());
   if (ui.fontSizeRange) {
-    ui.fontSizeRange.addEventListener("input", (e) => applyFontSize(e.target.value));
-    ui.fontSizeRange.addEventListener("change", () => saveUserSettings());
+    bindSafeListener(ui.fontSizeRange, "input", (e) => applyFontSize(e.target.value));
+    bindSafeListener(ui.fontSizeRange, "change", () => saveUserSettings());
   }
 
-  if (ui.clearAllHistoryBtn) ui.clearAllHistoryBtn.addEventListener("click", () => clearCurrentUserChats());
-  if (ui.downloadDataBtn) ui.downloadDataBtn.addEventListener("click", () => exportUserData());
-  if (ui.deleteAccountBtn) ui.deleteAccountBtn.addEventListener("click", () => handleDeleteAccount());
+  if (ui.clearAllHistoryBtn) bindSafeListener(ui.clearAllHistoryBtn, "click", () => clearCurrentUserChats());
+  if (ui.downloadDataBtn) bindSafeListener(ui.downloadDataBtn, "click", () => exportUserData());
+  if (ui.deleteAccountBtn) bindSafeListener(ui.deleteAccountBtn, "click", () => handleDeleteAccount());
 }
 
 async function loadUserSettings() {
@@ -1694,47 +1703,69 @@ function bindDashboardEvents() {
   if (ui._dashboardEventsBound) return;
   ui._dashboardEventsBound = true;
 
-  ui.newChatBtn.addEventListener("click", handleNewChat);
-  ui.logoutBtn.addEventListener("click", handleLogout);
+  if (ui.newChatBtn) bindSafeListener(ui.newChatBtn, "click", handleNewChat);
+  if (ui.logoutBtn) bindSafeListener(ui.logoutBtn, "click", handleLogout);
   bindModeDropdown();
   bindNotesDropdown();
 
-  ui.chatForm.addEventListener("submit", async (e) => { e.preventDefault(); await handleSendMessage(); });
-  ui.userInput.addEventListener("input", () => autoResizeTextarea(ui.userInput));
-  ui.userInput.addEventListener("keydown", async (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); await handleSendMessage(); } });
-  ui.hinglishToggle.addEventListener("change", async () => await saveActiveChatSettings());
+  if (ui.chatForm) {
+    bindSafeListener(ui.chatForm, "submit", async (e) => { e.preventDefault(); await handleSendMessage(); });
+  }
+  if (ui.userInput) {
+    bindSafeListener(ui.userInput, "input", () => autoResizeTextarea(ui.userInput));
+    bindSafeListener(ui.userInput, "keydown", async (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); await handleSendMessage(); } });
+  }
+  if (ui.hinglishToggle) {
+    bindSafeListener(ui.hinglishToggle, "change", async () => await saveActiveChatSettings());
+  }
 
-  ui.profileBtn.addEventListener("click", (e) => { e.stopPropagation(); closeModeDropdown(); closeNotesDropdown(); ui.profileDropdown.classList.toggle("show"); });
-  if (ui.settingsBtn) ui.settingsBtn.addEventListener("click", () => goToSettings());
-  ui.editNameBtn.addEventListener("click", () => openEditNameModal());
-  ui.cancelBtn.addEventListener("click", () => closeEditNameModal());
-  ui.saveNameBtn.addEventListener("click", async () => await saveDisplayName());
-  ui.newNameInput.addEventListener("keydown", async (e) => { if (e.key === "Enter") { e.preventDefault(); await saveDisplayName(); } if (e.key === "Escape") closeEditNameModal(); });
+  if (ui.profileBtn) {
+    bindSafeListener(ui.profileBtn, "click", (e) => {
+      e.stopPropagation();
+      closeModeDropdown();
+      closeNotesDropdown();
+      if (ui.profileDropdown) ui.profileDropdown.classList.toggle("show");
+    });
+  }
+  if (ui.settingsBtn) bindSafeListener(ui.settingsBtn, "click", () => goToSettings());
+  if (ui.editNameBtn) bindSafeListener(ui.editNameBtn, "click", () => openEditNameModal());
+  if (ui.cancelBtn) bindSafeListener(ui.cancelBtn, "click", () => closeEditNameModal());
+  if (ui.saveNameBtn) bindSafeListener(ui.saveNameBtn, "click", async () => await saveDisplayName());
+  if (ui.newNameInput) {
+    bindSafeListener(ui.newNameInput, "keydown", async (e) => {
+      if (e.key === "Enter") { e.preventDefault(); await saveDisplayName(); }
+      if (e.key === "Escape") closeEditNameModal();
+    });
+  }
 
-  ui.chatHistoryList.addEventListener("click", async (e) => {
-    const o = e.target.closest("[data-open-chat]"), r = e.target.closest("[data-rename-chat]"),
-      d = e.target.closest("[data-delete-chat]"), s = e.target.closest("[data-save-rename]"),
-      c = e.target.closest("[data-cancel-rename]");
-    if (o) return openChat(o.dataset.openChat);
-    if (r) return startRename(r.dataset.renameChat);
-    if (d) return await deleteChat(d.dataset.deleteChat);
-    if (s) return await saveRename(s.dataset.saveRename);
-    if (c) return cancelRename();
-  });
-  ui.chatHistoryList.addEventListener("input", (e) => { if (e.target.matches(".rename-input")) state.renameDraft = e.target.value; });
-  ui.chatHistoryList.addEventListener("keydown", async (e) => { if (!e.target.matches(".rename-input")) return; if (e.key === "Enter") { e.preventDefault(); await saveRename(e.target.dataset.chatId); } if (e.key === "Escape") cancelRename(); });
+  if (ui.chatHistoryList) {
+    bindSafeListener(ui.chatHistoryList, "click", async (e) => {
+      const o = e.target.closest("[data-open-chat]"), r = e.target.closest("[data-rename-chat]"),
+        d = e.target.closest("[data-delete-chat]"), s = e.target.closest("[data-save-rename]"),
+        c = e.target.closest("[data-cancel-rename]");
+      if (o) return openChat(o.dataset.openChat);
+      if (r) return startRename(r.dataset.renameChat);
+      if (d) return await deleteChat(d.dataset.deleteChat);
+      if (s) return await saveRename(s.dataset.saveRename);
+      if (c) return cancelRename();
+    });
+    bindSafeListener(ui.chatHistoryList, "input", (e) => { if (e.target.matches(".rename-input")) state.renameDraft = e.target.value; });
+    bindSafeListener(ui.chatHistoryList, "keydown", async (e) => { if (!e.target.matches(".rename-input")) return; if (e.key === "Enter") { e.preventDefault(); await saveRename(e.target.dataset.chatId); } if (e.key === "Escape") cancelRename(); });
+  }
 
-  ui.chatMessages.addEventListener("click", async (e) => {
-    const cb = e.target.closest("[data-copy-code]");
-    const cp = e.target.closest("[data-copy-message]");
-    const rg = e.target.closest("[data-regenerate-message]");
-    if (cb) return await window.copyCode(cb);
-    if (cp) return await copyMessageContent(Number(cp.dataset.copyMessage));
-    if (rg) return await regenerateAiMessage(Number(rg.dataset.regenerateMessage));
-  });
+  if (ui.chatMessages) {
+    bindSafeListener(ui.chatMessages, "click", async (e) => {
+      const cb = e.target.closest("[data-copy-code]");
+      const cp = e.target.closest("[data-copy-message]");
+      const rg = e.target.closest("[data-regenerate-message]");
+      if (cb) return await window.copyCode(cb);
+      if (cp) return await copyMessageContent(Number(cp.dataset.copyMessage));
+      if (rg) return await regenerateAiMessage(Number(rg.dataset.regenerateMessage));
+    });
+  }
 
   if (ui.changelogBtn) {
-    ui.changelogBtn.addEventListener("click", () => {
+    bindSafeListener(ui.changelogBtn, "click", () => {
       closeSidebar();
       history.pushState(null, "", "?view=changelog");
       toggleChangelogView(true);
@@ -1742,28 +1773,36 @@ function bindDashboardEvents() {
   }
 
   if (ui.changelogBackBtn) {
-    ui.changelogBackBtn.addEventListener("click", () => {
+    bindSafeListener(ui.changelogBackBtn, "click", () => {
       history.back(); // Triggers popstate which handles the hiding
     });
   }
 
-  ui.menuToggleBtn.addEventListener("click", toggleSidebar);
-  ui.sidebarOverlay.addEventListener("click", closeSidebar);
-  if (ui.guestLoginBtn) ui.guestLoginBtn.addEventListener("click", () => window.location.assign("/login"));
-  if (ui.guestSignupBtn) ui.guestSignupBtn.addEventListener("click", () => window.location.assign("/signup"));
-  if (ui.guestLaterBtn) ui.guestLaterBtn.addEventListener("click", closeGuestLimitModal);
+  if (ui.menuToggleBtn) bindSafeListener(ui.menuToggleBtn, "click", toggleSidebar);
+  if (ui.sidebarOverlay) bindSafeListener(ui.sidebarOverlay, "click", closeSidebar);
+  if (ui.guestLoginBtn) bindSafeListener(ui.guestLoginBtn, "click", () => window.location.assign("/login"));
+  if (ui.guestSignupBtn) bindSafeListener(ui.guestSignupBtn, "click", () => window.location.assign("/signup"));
+  if (ui.guestLaterBtn) bindSafeListener(ui.guestLaterBtn, "click", closeGuestLimitModal);
   if (ui.guestLimitModal) {
-    ui.guestLimitModal.addEventListener("click", (e) => {
+    bindSafeListener(ui.guestLimitModal, "click", (e) => {
       if (e.target === ui.guestLimitModal) closeGuestLimitModal();
     });
   }
 
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest(".profile-wrap") && ui.profileDropdown.classList.contains("show")) ui.profileDropdown.classList.remove("show");
-    if (!e.target.closest("#modeDropdown")) closeModeDropdown();
-    if (!e.target.closest("#notesDropdown")) closeNotesDropdown();
-  });
-  ui.editNameModal.addEventListener("click", (e) => { if (e.target === ui.editNameModal) closeEditNameModal(); });
+  if (!window._dashboardDocClickBound) {
+    window._dashboardDocClickBound = true;
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".profile-wrap") && ui?.profileDropdown?.classList?.contains("show")) {
+        ui.profileDropdown.classList.remove("show");
+      }
+      if (!e.target.closest("#modeDropdown")) closeModeDropdown();
+      if (!e.target.closest("#notesDropdown")) closeNotesDropdown();
+    });
+  }
+
+  if (ui.editNameModal) {
+    bindSafeListener(ui.editNameModal, "click", (e) => { if (e.target === ui.editNameModal) closeEditNameModal(); });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2303,6 +2342,7 @@ async function fetchAIResponse(messages, mode, hinglishEnabled, notesMode) {
   const requestPayload = {
     messages,
     mode,
+    model_choice: state.userSettings.aiModel || "auto",
     hinglish: hinglishEnabled,
     notesMode: notesMode || "normal",
     userId: state.currentUser?.uid || "guest",
@@ -2756,38 +2796,89 @@ function autoResizeTextarea(textarea) { textarea.style.height = "auto"; textarea
 // ---------------------------------------------------------------------------
 
 function bindModeDropdown() {
-  ui.selectedMode.addEventListener("click", (e) => { e.stopPropagation(); ui.profileDropdown.classList.remove("show"); closeNotesDropdown(); ui.modeDropdown.classList.toggle("open"); ui.selectedMode.setAttribute("aria-expanded", String(ui.modeDropdown.classList.contains("open"))); });
-  ui.dropdownOptions.addEventListener("click", async (e) => { const option = e.target.closest(".option"); if (!option) return; setSelectedMode(option.dataset.value || option.textContent.trim()); closeModeDropdown(); await saveActiveChatSettings(); });
+  if (ui.selectedMode) {
+    bindSafeListener(ui.selectedMode, "click", (e) => {
+      e.stopPropagation();
+      if (ui.profileDropdown) ui.profileDropdown.classList.remove("show");
+      closeNotesDropdown();
+      if (ui.modeDropdown) {
+        ui.modeDropdown.classList.toggle("open");
+        ui.selectedMode.setAttribute("aria-expanded", String(ui.modeDropdown.classList.contains("open")));
+      }
+    });
+  }
+  if (ui.dropdownOptions) {
+    bindSafeListener(ui.dropdownOptions, "click", async (e) => {
+      const option = e.target.closest(".option");
+      if (!option) return;
+      setSelectedMode(option.dataset.value || option.textContent.trim());
+      closeModeDropdown();
+      await saveActiveChatSettings();
+    });
+  }
 }
 
 function setSelectedMode(mode) {
   const normalized = normalizeMode(mode);
-  ui.selectedMode.textContent = MODE_LABELS[normalized];
-  ui.selectedMode.dataset.value = normalized;
-  ui.dropdownOptions.querySelectorAll(".option").forEach((o) => o.classList.toggle("active", o.dataset.value === normalized));
+  if (ui.selectedMode) {
+    ui.selectedMode.textContent = MODE_LABELS[normalized];
+    ui.selectedMode.dataset.value = normalized;
+  }
+  if (ui.dropdownOptions) {
+    ui.dropdownOptions.querySelectorAll(".option").forEach((o) => o.classList.toggle("active", o.dataset.value === normalized));
+  }
 }
 
-function getSelectedMode() { return normalizeMode(ui.selectedMode.dataset.value || ui.selectedMode.textContent); }
-function closeModeDropdown() { ui.modeDropdown.classList.remove("open"); ui.selectedMode.setAttribute("aria-expanded", "false"); }
+function getSelectedMode() { return normalizeMode(ui?.selectedMode?.dataset?.value || ui?.selectedMode?.textContent); }
+function closeModeDropdown() {
+  if (ui?.modeDropdown) ui.modeDropdown.classList.remove("open");
+  if (ui?.selectedMode) ui.selectedMode.setAttribute("aria-expanded", "false");
+}
 
 // ---------------------------------------------------------------------------
 // Notes mode dropdown
 // ---------------------------------------------------------------------------
 
 function bindNotesDropdown() {
-  ui.notesSelected.addEventListener("click", (e) => { e.stopPropagation(); ui.profileDropdown.classList.remove("show"); closeModeDropdown(); ui.notesDropdown.classList.toggle("open"); ui.notesSelected.setAttribute("aria-expanded", String(ui.notesDropdown.classList.contains("open"))); });
-  ui.notesDropdownOptions.addEventListener("click", async (e) => { const option = e.target.closest(".option"); if (!option) return; setSelectedNotesMode(option.dataset.value || "normal"); closeNotesDropdown(); await saveActiveChatSettings(); });
+  if (ui.notesSelected) {
+    bindSafeListener(ui.notesSelected, "click", (e) => {
+      e.stopPropagation();
+      if (ui.profileDropdown) ui.profileDropdown.classList.remove("show");
+      closeModeDropdown();
+      if (ui.notesDropdown) {
+        ui.notesDropdown.classList.toggle("open");
+        ui.notesSelected.setAttribute("aria-expanded", String(ui.notesDropdown.classList.contains("open")));
+      }
+    });
+  }
+  if (ui.notesDropdownOptions) {
+    bindSafeListener(ui.notesDropdownOptions, "click", async (e) => {
+      const option = e.target.closest(".option");
+      if (!option) return;
+      setSelectedNotesMode(option.dataset.value || "normal");
+      closeNotesDropdown();
+      await saveActiveChatSettings();
+    });
+  }
 }
 
 function setSelectedNotesMode(mode) {
   const normalized = normalizeNotesMode(mode);
   const labels = { normal: "Normal", bullet: "Bullet Notes", revision: "Revision Notes", flashcards: "Flashcards" };
-  ui.notesSelected.textContent = labels[normalized] || "Normal"; ui.notesSelected.dataset.value = normalized;
-  ui.notesDropdownOptions.querySelectorAll(".option").forEach((o) => o.classList.toggle("active", o.dataset.value === normalized));
+  if (ui.notesSelected) {
+    ui.notesSelected.textContent = labels[normalized] || "Normal";
+    ui.notesSelected.dataset.value = normalized;
+  }
+  if (ui.notesDropdownOptions) {
+    ui.notesDropdownOptions.querySelectorAll(".option").forEach((o) => o.classList.toggle("active", o.dataset.value === normalized));
+  }
 }
 
-function getSelectedNotesMode() { return normalizeNotesMode(ui.notesSelected.dataset.value || "normal"); }
-function closeNotesDropdown() { ui.notesDropdown.classList.remove("open"); ui.notesSelected.setAttribute("aria-expanded", "false"); }
+function getSelectedNotesMode() { return normalizeNotesMode(ui?.notesSelected?.dataset?.value || "normal"); }
+function closeNotesDropdown() {
+  if (ui?.notesDropdown) ui.notesDropdown.classList.remove("open");
+  if (ui?.notesSelected) ui.notesSelected.setAttribute("aria-expanded", "false");
+}
 
 // ---------------------------------------------------------------------------
 // Navigation / settings
@@ -3619,7 +3710,14 @@ async function revokeCurrentSession(uid) {
 // Settings UI: Load and Manage Sessions
 // ---------------------------------------------------------------------------
 
+let activeSessionsUnsubscribe = null;
+
 function loadSessions(user) {
+  if (activeSessionsUnsubscribe) {
+    activeSessionsUnsubscribe();
+    activeSessionsUnsubscribe = null;
+  }
+
   if (!state.currentUser?.uid) {
     console.warn("[Sessions] Skipping session load: auth not ready");
     return;
@@ -3634,7 +3732,7 @@ function loadSessions(user) {
     where("revokedAt", "==", null)
   );
 
-  onSnapshot(q, (snapshot) => {
+  activeSessionsUnsubscribe = onSnapshot(q, (snapshot) => {
     // Filter out stale sessions (>30 days old without a heartbeat)
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const activeSessions = snapshot.docs.filter(d => {
@@ -4069,23 +4167,39 @@ async function bootstrap() {
     window.spaNavigation = spaNavigation;
     spaNavigation.onNavigate(async (targetPath, dataPage) => {
       applySavedTheme();
+      if (ui?.profileDropdown) ui.profileDropdown.classList.remove("show");
+      closeModeDropdown();
+      closeNotesDropdown();
+
       if (dataPage === "settings") {
-        initSettingsPage();
-        if (state.currentUser) {
-          await loadUserSettings();
-          await loadUserMemory();
-          populateUserInfo(state.currentUser);
-          await loadUsageStats();
-          loadSessions(state.currentUser);
+        try {
+          initSettingsPage();
+          if (state.currentUser) {
+            try { await loadUserSettings(); } catch (e) { console.warn("[Settings] loadUserSettings error:", e); }
+            try { await loadUserMemory(); } catch (e) { console.warn("[Settings] loadUserMemory error:", e); }
+            try { populateUserInfo(state.currentUser); } catch (e) { console.warn("[Settings] populateUserInfo error:", e); }
+            try { await loadUsageStats(); } catch (e) { console.warn("[Settings] loadUsageStats error:", e); }
+            try { loadSessions(state.currentUser); } catch (e) { console.warn("[Settings] loadSessions error:", e); }
+          }
+        } catch (err) {
+          console.error("[Settings] Page init error:", err);
+        } finally {
+          hideSkeletonOverlay("settingsSkeleton");
         }
-        hideSkeletonOverlay("settingsSkeleton");
       } else if (dataPage === "dashboard") {
-        initDashboardPage();
-        if (state.currentUser) {
-          startDashboardApp(state.currentUser);
-          populateUserInfo(state.currentUser);
+        try {
+          initDashboardPage();
+          if (state.currentUser) {
+            startDashboardApp(state.currentUser);
+            populateUserInfo(state.currentUser);
+            renderHistory();
+            renderMessages();
+          }
+        } catch (err) {
+          console.error("[Dashboard] Page init error:", err);
+        } finally {
+          hideSkeletonOverlay("dashboardSkeleton");
         }
-        hideSkeletonOverlay("dashboardSkeleton");
       }
     });
 
@@ -4104,6 +4218,9 @@ async function bootstrap() {
 
   } catch (err) {
     console.error("StudyMate Bootstrap Error:", err);
+  } finally {
+    hideSkeletonOverlay("dashboardSkeleton");
+    hideSkeletonOverlay("settingsSkeleton");
   }
 }
 

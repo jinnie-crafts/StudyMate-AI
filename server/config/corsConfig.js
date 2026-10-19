@@ -6,9 +6,20 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 const DEFAULT_DEV_ORIGINS = [
   'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
+];
+
+const DEFAULT_PRODUCTION_ORIGINS = [
+  'https://aadirishi.in',
+  'https://www.aadirishi.in',
+  'https://studymate-ai-bc65e.web.app',
+  'https://studymate-ai-bc65e.firebaseapp.com'
 ];
 
 function validateAndNormalizeOrigins() {
@@ -21,7 +32,8 @@ function validateAndNormalizeOrigins() {
     originsToProcess = DEFAULT_DEV_ORIGINS;
     log.info('CORS fallback list loaded for development.');
   } else {
-    log.error('CRITICAL WARNING: ALLOWED_ORIGINS environment variable is not defined or empty in production environment!');
+    originsToProcess = DEFAULT_PRODUCTION_ORIGINS;
+    log.warn('ALLOWED_ORIGINS environment variable not set; loaded authoritative production defaults.');
   }
 
   const validOrigins = [];

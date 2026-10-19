@@ -41,12 +41,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="preload"
-    as="style" onload="this.onload=null;this.rel='stylesheet'" />
-  <noscript>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
-      rel="stylesheet" />
-  </noscript>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="skeleton.css" />
 </head>
@@ -161,22 +156,6 @@
 
   <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Early Firebase Action Link Detection (runs before app.js loads) -->
-  <script>
-    (function () {
-      var params = new URLSearchParams(window.location.search);
-      var mode = params.get("mode");
-      var oobCode = params.get("oobCode");
-      if (mode && oobCode) {
-        console.log("[AUTH ACTION - EARLY] Detected action link on login page:", mode);
-        var targets = { resetPassword: "/reset", verifyEmail: "/verify", recoverEmail: "/recover" };
-        var target = targets[mode];
-        if (target) {
-          window.location.replace(target + "?" + params.toString());
-        }
-      }
-    })();
-  </script>
   <script type="module" src="app.js"></script>
 </body>
 

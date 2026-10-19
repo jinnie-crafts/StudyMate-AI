@@ -21,10 +21,11 @@ const inflightGetRequests = new Map(); // key: fullUrl -> Promise<Response>
  * Determine API base URL dynamically based on environment
  */
 export function getApiBaseUrl() {
-  if (window.location.hostname === "localhost") {
-    return window.location.port === "3000" ? "http://localhost:3001" : "";
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") {
+    return window.location.port === "3001" ? "" : `http://${host}:3001`;
   }
-  return window.location.hostname.includes("onrender.com") ? "" : "https://api.aadirishi.in";
+  return host.includes("onrender.com") ? "" : "https://api.aadirishi.in";
 }
 
 /**

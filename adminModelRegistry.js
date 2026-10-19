@@ -42,15 +42,14 @@ function setupDom(container) {
           <h1>AI Model Registry</h1>
           <p>Authoritative OpenRouter model configuration, capability mapping, and zero-downtime fallback controls.</p>
         </div>
-        <div style="display: flex; gap: 10px;">
+        <div style="display: flex; gap: 10px; align-items: center;">
           <button id="refreshModelsBtn" class="secondary-btn" style="display: flex; align-items: center; gap: 6px; padding: 10px 16px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
             Refresh
           </button>
-          <button id="openAddModelModalBtn" class="primary-btn" style="display: flex; align-items: center; gap: 6px; padding: 10px 18px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            Add New Model
-          </button>
+          <div style="padding: 8px 14px; background: rgba(124, 58, 237, 0.15); border: 1px solid rgba(124, 58, 237, 0.3); border-radius: 10px; font-size: 0.78rem; color: #c4b5fd; font-weight: 600;">
+            4 Whitelist Models
+          </div>
         </div>
       </div>
     </header>
@@ -224,13 +223,18 @@ async function loadModels(forceRefresh = false) {
       }
 
       const data = await res.json();
-      modelsList = Array.isArray(data.models) ? data.models : [];
+      const rawList = Array.isArray(data.models) ? data.models : [];
+      const APPROVED_KEYS = new Set(["general_chat", "coding_assistant", "fallback_model", "apodex_mini"]);
+      modelsList = rawList.filter(m => APPROVED_KEYS.has(m.internal_key));
       renderTable();
       return modelsList;
     } catch (err) {
       console.error("[AdminModelRegistry] Load error:", err);
       if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="6" style="padding: 24px; text-align: center; color: #ef4444;">Failed to load models: ${escapeHtml(err.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="padding: 24px; text-align: center; color: #ef4444;">
+          <div style="font-weight: 600; margin-bottom: 6px;">Failed to load models: ${escapeHtml(err.message)}</div>
+          <button class="secondary-btn" style="margin-top: 8px; font-size: 0.8rem; padding: 6px 14px;" onclick="window._adminModelAction('refresh')">Retry Fetch</button>
+        </td></tr>`;
       }
     } finally {
       isLoadingModels = false;
@@ -313,6 +317,10 @@ function renderTable() {
 
 // Global action dispatcher for HTML onclick
 window._adminModelAction = (action, key) => {
+  if (action === "refresh") {
+    loadModels(true);
+    return;
+  }
   const model = modelsList.find(m => m.internal_key === key);
   if (!model && action !== "add") return;
 
@@ -328,30 +336,20 @@ window._adminModelAction = (action, key) => {
 };
 
 function openAddModal() {
-  editingModelKey = null;
-  document.getElementById("modelModalTitle").textContent = "Add New AI Model";
-  document.getElementById("modelInternalKey").disabled = false;
-  document.getElementById("modelInternalKey").value = "";
-  document.getElementById("modelDisplayName").value = "";
-  document.getElementById("modelProviderId").value = "";
-  document.getElementById("modelDescription").value = "";
-  document.getElementById("modelRoles").value = "general_chat";
-  document.getElementById("modelCapabilities").value = "chat, general";
-  document.getElementById("modelFallbackPriority").value = "1";
-  document.getElementById("modelIsDefault").checked = false;
-  document.getElementById("modelEnabled").checked = true;
-  document.getElementById("testPingResult").innerHTML = "Click 'Test Ping' to verify model ID availability with a 1-token probe.";
-
-  document.getElementById("modelConfigModal").style.display = "flex";
+  alertToast("Adding new models is disabled. The system is strictly restricted to the 4 approved whitelist models.", "warning");
 }
 
 function openEditModal(model) {
   editingModelKey = model.internal_key;
-  document.getElementById("modelModalTitle").textContent = `Edit Model: ${model.display_name}`;
-  document.getElementById("modelInternalKey").disabled = true;
-  document.getElementById("modelInternalKey").value = model.internal_key;
+  document.getElementById("modelModalTitle").textContent = `Configure Model: ${model.display_name}`;
+  const keyInput = document.getElementById("modelInternalKey");
+  keyInput.disabled = true;
+  keyInput.value = model.internal_key;
   document.getElementById("modelDisplayName").value = model.display_name || "";
-  document.getElementById("modelProviderId").value = model.provider_id || "";
+  const providerInput = document.getElementById("modelProviderId");
+  providerInput.value = model.provider_id || "";
+  providerInput.disabled = true;
+  providerInput.title = "Provider ID is locked to the approved whitelist value.";
   document.getElementById("modelDescription").value = model.description || "";
   document.getElementById("modelRoles").value = (model.roles || []).join(", ");
   document.getElementById("modelCapabilities").value = (model.capabilities || []).join(", ");
@@ -451,31 +449,7 @@ async function toggleModelEnabled(model) {
 }
 
 async function confirmDeleteModel(model) {
-  if (model.is_default) {
-    alertToast(`Cannot delete '${model.display_name}' because it is marked as Default for its role. Assign another model as default first.`, "error");
-    return;
-  }
-
-  if (!confirm(`Are you sure you want to delete '${model.display_name}' (${model.internal_key})? This action cannot be undone.`)) {
-    return;
-  }
-
-  try {
-    const res = await adminFetch(`/api/admin/models/${encodeURIComponent(model.internal_key)}`, {
-      method: "DELETE"
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
-    }
-
-    alertToast("Model deleted successfully.", "success");
-    window.dispatchEvent(new CustomEvent("model-registry-updated"));
-    await loadModels(true);
-  } catch (err) {
-    alertToast(err.message, "error");
-  }
+  alertToast(`Approved model '${model.display_name}' cannot be deleted. The system requires all 4 whitelist models. You can disable this model instead.`, "warning");
 }
 
 async function handleTestPing() {

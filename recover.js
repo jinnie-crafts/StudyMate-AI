@@ -47,3 +47,17 @@ function showError(message) {
     statusMsg.className = "error-text";
     if (successActions) successActions.style.display = "block";
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+    const backBtn = document.getElementById("backBtn");
+    if (backBtn) {
+        backBtn.textContent = (document.referrer && document.referrer !== window.location.href) ? "← Back" : "Back to Login";
+        backBtn.addEventListener("click", () => {
+            if (document.referrer && document.referrer !== window.location.href) {
+                window.history.back();
+            } else {
+                window.location.href = "/login";
+            }
+        });
+    }
+});

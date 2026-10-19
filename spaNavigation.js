@@ -177,7 +177,7 @@ class SPANavigationManager {
   captureCurrentViewContent() {
     const page = document.body.dataset.page;
     if (page === "dashboard") {
-      const appEl = document.getElementById("app");
+      const appEl = document.getElementById("app") || document.querySelector(".app-container");
       return appEl ? appEl.outerHTML : document.body.innerHTML;
     } else if (page === "settings") {
       const settingsEl = document.querySelector(".settings-shell");
@@ -261,9 +261,6 @@ class SPANavigationManager {
       if (cached) {
         // Render cached view immediately
         this.mountView(targetPath, cached);
-        this.finishProgress();
-        this.isNavigating = false;
-
         // If stale, fetch fresh view in background
         if (!isFresh) {
           this.fetchAndCacheView(targetPath, false);
@@ -291,9 +288,16 @@ class SPANavigationManager {
   async fetchAndCacheView(targetPath, mountAfter = false) {
     try {
       const fetchUrl = targetPath === "/" ? "/index.html" : targetPath;
-      const res = await fetch(fetchUrl, {
+      let res = await fetch(fetchUrl, {
         headers: { "X-Requested-With": "StudyMateSPA" }
       });
+
+      // Fallback for static servers without clean URL rewrites: try .html
+      if (!res.ok && !fetchUrl.endsWith(".html")) {
+        res = await fetch(`${fetchUrl}.html`, {
+          headers: { "X-Requested-With": "StudyMateSPA" }
+        });
+      }
 
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
@@ -304,12 +308,21 @@ class SPANavigationManager {
       const doc = parser.parseFromString(htmlText, "text/html");
 
       const title = doc.title || "StudyMate AI";
-      const dataPage = doc.body.dataset.page || (targetPath.includes("settings") ? "settings" : "dashboard");
-      const bodyClass = doc.body.className || (dataPage === "settings" ? "settings-page" : "app-page");
+      let dataPage = doc.body.dataset.page;
+      if (!dataPage) {
+        if (targetPath.includes("settings")) {
+          dataPage = "settings";
+        } else if (targetPath.includes("terms") || targetPath.includes("privacy") || doc.querySelector(".legal-container")) {
+          dataPage = "legal";
+        } else {
+          dataPage = "dashboard";
+        }
+      }
+      const bodyClass = doc.body.className || (dataPage === "settings" ? "settings-page" : (dataPage === "legal" ? "legal-page" : "app-page"));
 
       let contentHtml = "";
       if (dataPage === "dashboard") {
-        const app = doc.getElementById("app");
+        const app = doc.getElementById("app") || doc.querySelector(".app-container");
         contentHtml = app ? app.outerHTML : doc.body.innerHTML;
       } else if (dataPage === "settings") {
         const shell = doc.querySelector(".settings-shell");
@@ -344,43 +357,63 @@ class SPANavigationManager {
     document.body.dataset.page = viewRecord.dataPage;
     document.body.className = viewRecord.bodyClass;
 
-    // 2. Hide or replace active container
-    let container = document.getElementById("spaActiveMount");
-    if (!container) {
-      container = document.createElement("div");
-      container.id = "spaActiveMount";
-      document.body.appendChild(container);
-    }
-
-    // Existing native containers handling
-    const existingApp = document.getElementById("app");
-    const existingSettings = document.querySelector(".settings-shell");
-    const existingLegal = document.querySelector(".legal-container");
+    // 2. Identify native and persistent mounts
+    const existingApp = document.getElementById("app") || document.querySelector(".app-container");
+    const nativeSettings = document.querySelector("body > .settings-shell");
+    let settingsMount = document.getElementById("spaSettingsMount");
+    let legalMount = document.getElementById("spaLegalMount");
 
     if (viewRecord.dataPage === "dashboard") {
-      if (existingSettings) existingSettings.style.display = "none";
-      if (existingLegal) existingLegal.style.display = "none";
-      if (container) container.innerHTML = "";
+      if (nativeSettings) nativeSettings.style.display = "none";
+      if (settingsMount) settingsMount.style.display = "none";
+      if (legalMount) legalMount.style.display = "none";
 
       if (existingApp) {
         existingApp.style.display = "";
-      } else {
-        container.innerHTML = viewRecord.html;
       }
     } else if (viewRecord.dataPage === "settings") {
       if (existingApp) existingApp.style.display = "none";
-      if (existingLegal) existingLegal.style.display = "none";
+      if (legalMount) legalMount.style.display = "none";
 
-      if (existingSettings && document.body.contains(existingSettings)) {
-        existingSettings.style.display = "";
+      if (nativeSettings) {
+        nativeSettings.style.display = "";
       } else {
-        container.innerHTML = viewRecord.html;
+        if (!settingsMount) {
+          settingsMount = document.createElement("div");
+          settingsMount.id = "spaSettingsMount";
+          settingsMount.innerHTML = viewRecord.html;
+          document.body.appendChild(settingsMount);
+        } else {
+          settingsMount.style.display = "";
+          settingsMount.innerHTML = viewRecord.html;
+        }
       }
     } else {
       // Legal or other pages
       if (existingApp) existingApp.style.display = "none";
-      if (existingSettings) existingSettings.style.display = "none";
-      container.innerHTML = viewRecord.html;
+      if (nativeSettings) nativeSettings.style.display = "none";
+      if (settingsMount) settingsMount.style.display = "none";
+
+      if (!legalMount) {
+        legalMount = document.createElement("div");
+        legalMount.id = "spaLegalMount";
+        document.body.appendChild(legalMount);
+      }
+      legalMount.style.display = "";
+      legalMount.innerHTML = viewRecord.html;
+
+      // Bind back button navigation
+      const backBtn = legalMount.querySelector("#backBtn") || legalMount.querySelector(".back-link");
+      if (backBtn) {
+        backBtn.onclick = (e) => {
+          e.preventDefault();
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            this.navigateTo("/");
+          }
+        };
+      }
     }
 
     // 3. Scroll to top on fresh page load or restore transient state
@@ -405,6 +438,10 @@ class SPANavigationManager {
   clearUserCaches() {
     this.viewCache.clear();
     this.stateCache.clear();
+    const settingsMount = document.getElementById("spaSettingsMount");
+    if (settingsMount) settingsMount.remove();
+    const legalMount = document.getElementById("spaLegalMount");
+    if (legalMount) legalMount.remove();
     console.log("[SPANavigation] Cleared view and state caches for user isolation.");
   }
 }

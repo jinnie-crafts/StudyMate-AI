@@ -16,10 +16,11 @@ export const FALLBACK_CLIENT_MODELS = [
     internal_key: "general_chat",
     display_name: "Gemma 4 31B (Free)",
     provider_id: "google/gemma-4-31b-it:free",
-    description: "High-intelligence flagship model with deep subject comprehension and balanced latency.",
-    capabilities: ["general", "chat", "explanations"],
-    roles: ["general_chat"],
-    is_default: true
+    description: "High-intelligence flagship model with deep subject comprehension, balanced latency, and reasoning capabilities.",
+    capabilities: ["general", "chat", "explanations", "reasoning", "exam"],
+    roles: ["general_chat", "exam_revision"],
+    is_default: true,
+    enabled: true
   },
   {
     internal_key: "coding_assistant",
@@ -28,59 +29,51 @@ export const FALLBACK_CLIENT_MODELS = [
     description: "Specialized code generation engine for syntax diagnostics, bug fixes, refactoring, and algorithms.",
     capabilities: ["coding", "syntax", "debug"],
     roles: ["coding_assistant"],
-    is_default: true
+    is_default: true,
+    enabled: true
   },
   {
-    internal_key: "exam_revision",
-    display_name: "Gemma 4 Exam & Revision (Free)",
-    provider_id: "google/gemma-4-31b-it:free",
-    description: "Tuned for revision notes, practice questions, flashcards, and syllabus drills.",
-    capabilities: ["exam", "revision", "flashcards"],
-    roles: ["exam_revision"],
-    is_default: true
+    internal_key: "fallback_model",
+    display_name: "Gemma 4 26B A4B (Free)",
+    provider_id: "google/gemma-4-26b-a4b-it:free",
+    description: "Reliable fallback model used when primary endpoints experience rate limits or downtime.",
+    capabilities: ["fallback", "general"],
+    roles: ["fallback", "security_guardrail"],
+    is_default: false,
+    enabled: true
   },
   {
-    internal_key: "deepseek_r1",
-    display_name: "DeepSeek R1 (Free)",
-    provider_id: "deepseek/deepseek-r1:free",
-    description: "Advanced reasoning engine specializing in deep mathematical proof and analytical logic.",
-    capabilities: ["reasoning", "math", "analysis"],
-    roles: ["general_chat", "exam_revision"],
-    is_default: false
-  },
-  {
-    internal_key: "llama_3_3_70b",
-    display_name: "Llama 3.3 70B (Free)",
-    provider_id: "meta-llama/llama-3.3-70b-instruct:free",
-    description: "Meta's flagship open-weights model for creative dialogue and essay synthesis.",
-    capabilities: ["chat", "creative", "general"],
-    roles: ["general_chat"],
-    is_default: false
-  },
-  {
-    internal_key: "qwen_2_5_72b",
-    display_name: "Qwen 2.5 72B (Free)",
-    provider_id: "qwen/qwen-2.5-72b-instruct:free",
-    description: "High-speed multilingual intelligence with strong technical performance.",
-    capabilities: ["coding", "multilingual", "fast"],
-    roles: ["coding_assistant", "general_chat"],
-    is_default: false
+    internal_key: "apodex_mini",
+    display_name: "Apodex 1.1 Mini (Free)",
+    provider_id: "apodex/apodex-1.1-mini:free",
+    description: "Ultra-fast lightweight fallback engine for rapid response, intent detection, and failover continuity.",
+    capabilities: ["fallback", "fast", "general"],
+    roles: ["fallback", "fast_classifier"],
+    is_default: false,
+    enabled: true
   }
 ];
 
 export const LEGACY_KEY_ALIASES = {
-  deepseek: "deepseek_r1",
-  qwen: "qwen_2_5_72b",
-  llama: "llama_3_3_70b",
+  deepseek: "general_chat",
+  deepseek_r1: "general_chat",
+  qwen: "coding_assistant",
+  qwen_2_5_72b: "coding_assistant",
+  llama: "general_chat",
+  llama_3_3_70b: "general_chat",
   coding: "coding_assistant",
-  gemma: "general_chat"
+  gemma: "general_chat",
+  exam_revision: "general_chat",
+  fast_classifier: "apodex_mini",
+  security_classifier: "fallback_model"
 };
 
 function getApiBaseUrl() {
-  if (window.location.hostname === "localhost") {
-    return window.location.port === "3000" ? "http://localhost:3001" : "";
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") {
+    return window.location.port === "3001" ? "" : `http://${host}:3001`;
   }
-  return window.location.hostname.includes("onrender.com") ? "" : "https://api.aadirishi.in";
+  return host.includes("onrender.com") ? "" : "https://api.aadirishi.in";
 }
 
 /**
@@ -163,16 +156,17 @@ export async function populateModelSelect(selectEl, currentSelection = "auto", d
     }
   }
 
-  // Filter models for user selector (show general/coding/exam conversational models, omit internal classifiers)
+  // Filter models for user selector (show general/coding chat models, omit pure fallback and internal classifier models)
   const userSelectableModels = models.filter(m => {
+    if (!m.enabled) return false;
+    if (m.internal_key === "fallback_model" || m.internal_key === "apodex_mini") return false;
     if (options.role) {
       return Array.isArray(m.roles) && m.roles.includes(options.role);
     }
-    // Omit internal-only models like pure classifiers or pure fallbacks without chat roles
     if (Array.isArray(m.roles)) {
-      return m.roles.some(r => ["general_chat", "coding_assistant", "exam_revision"].includes(r));
+      return m.roles.some(r => ["general_chat", "coding_assistant"].includes(r));
     }
-    return true;
+    return m.internal_key === "general_chat" || m.internal_key === "coding_assistant";
   });
 
   // Build options

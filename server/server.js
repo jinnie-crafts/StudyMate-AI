@@ -5,13 +5,26 @@
  * Frontend calls POST /api/chat → this server → OpenRouter → response back.
  */
 
-require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
+
+// Robust environment variable loading across execution paths (cwd, server/, root)
+const envLocations = [
+  path.join(__dirname, ".env"),
+  path.join(process.cwd(), "server", ".env"),
+  path.join(process.cwd(), ".env")
+];
+for (const envPath of envLocations) {
+  if (fs.existsSync(envPath)) {
+    require("dotenv").config({ path: envPath });
+  }
+}
+require("dotenv").config(); // fallback to standard dotenv resolution
+
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
-const fs = require("fs");
-const path = require("path");
 const { loggers } = require("./services/logger");
 const log = loggers.server;
 
@@ -25,37 +38,57 @@ const kbRoutes = require("./routes/kb"); // Knowledge Base Admin API
 const { checkSecurity } = require("./services/security"); // Pre-LLM Security Guardrail
 const { requireAuth } = require("./services/authMiddleware"); // Firebase Auth Middleware
 const modelRegistry = require("./services/modelRegistry"); // Centralized AI Model Registry
+const aiService = require("./services/aiService"); // Centralized AI Request Pipeline Service
 
-if (!process.env.OPENROUTER_API_KEY) {
-  log.fatal("CRITICAL: Missing OPENROUTER_API_KEY in environment.");
-}
+// Initialize AI Service singleton at startup
+aiService.initialize();
 
 const REALTIME_QUERY_REGEX = /(today|now|latest|news|current|recent|weather|price|score|stock|time)/i;
 const NEWS_QUERY_REGEX = /(news|headlines|breaking|latest news|current affairs)/i;
 const CODE_QUERY_REGEX = /code|program|example|debug|script|function|snippet|coding/i;
 const MATH_QUERY_REGEX = /math|calculate|solve|equation/i;
 const DIAGRAM_QUERY_REGEX = /diagram|chart|graph|flow|flowchart|structure|architecture/i;
+
+// Dynamic model constants backed by the authoritative Model Registry (backwards-compatibility)
 const DEFAULT_MODEL = "google/gemma-4-31b-it:free";
-const IDENTITY_CLASSIFIER_MODEL = "openrouter/free";
+const IDENTITY_CLASSIFIER_MODEL = "apodex/apodex-1.1-mini:free";
 
-const MODEL_POOL = [
-  "google/gemma-4-31b-it:free",
-  "cohere/north-mini-code:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "apodex/apodex-1.1-mini:free"
-];
+const MODEL_POOL = new Proxy([], {
+  get: (_target, prop) => {
+    if (prop === 'includes') {
+      return (val) => {
+        for (const m of modelRegistry.inMemoryRegistry.values()) {
+          if (m.provider_id === val && m.enabled) return true;
+        }
+        return false;
+      };
+    }
+    const arr = Array.from(modelRegistry.inMemoryRegistry.values())
+      .filter(m => m.enabled)
+      .map(m => m.provider_id);
+    return arr[prop];
+  }
+});
 
-// Model Strategy Constants
-const MODELS = {
-  GENERAL: "google/gemma-4-31b-it:free",
-  LONG_EXPLANATION: "google/gemma-4-31b-it:free",
-  CODING: "cohere/north-mini-code:free",
-  REASONING: "google/gemma-4-31b-it:free",
-  FAST: "google/gemma-4-31b-it:free",
-  FALLBACK: "google/gemma-4-26b-a4b-it:free"
-};
+const MODELS = new Proxy({}, {
+  get: (_target, prop) => {
+    const roleMap = {
+      CODING: "coding_assistant",
+      REASONING: "general_chat",
+      FAST: "apodex_mini",
+      FALLBACK: "fallback_model",
+      LONG_EXPLANATION: "general_chat",
+      GENERAL: "general_chat"
+    };
+    const role = roleMap[prop] || "general_chat";
+    const model = modelRegistry.inMemoryRegistry?.get(
+      role === "fallback" ? "fallback_model" : (role === "fast_classifier" ? "apodex_mini" : (role === "exam_revision" ? "general_chat" : role))
+    );
+    return model?.provider_id || "google/gemma-4-31b-it:free";
+  }
+});
 
-const failureTracker = new Map(); // model -> { expiry, reason }
+const failureTracker = aiService.failureTracker;
 const COOLDOWN_MS = 5 * 60 * 1000;
 let lastProbeTime = 0;
 const PROBE_INTERVAL_MS = 10000;
@@ -120,7 +153,7 @@ app.use((req, res, next) => {
 // 2. CORS — Load allowed origins from config and set credentials to false
 const { allowedOrigins } = require("./config/corsConfig");
 
-app.use(cors({
+const corsOptions = {
   origin: (origin, callback) => {
     // Allow server-to-server / same-origin requests (no origin) and allowed origins
     if (!origin || allowedOrigins.includes(origin)) {
@@ -130,10 +163,13 @@ app.use(cors({
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'Origin'],
   credentials: false,
   optionsSuccessStatus: 204
-}));
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // CORS Origin Validation Middleware for non-preflight requests
 app.use((req, res, next) => {
@@ -148,12 +184,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// 3. Security Headers — Helmet (VULN-07)
+// 3. Security Headers — Helmet (VULN-07) & Content Security Policy
+const CSP_HEADER_VALUE = "default-src 'self'; script-src 'self' https://www.gstatic.com https://cdn.jsdelivr.net https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: https://lh3.googleusercontent.com https://ui-avatars.com; connect-src 'self' http://localhost:3001 http://127.0.0.1:3001 http://localhost:3000 http://127.0.0.1:3000 http://localhost:5000 http://127.0.0.1:5000 http://localhost:5500 http://127.0.0.1:5500 https://api.aadirishi.in https://openrouter.ai https://*.firebaseio.com https://*.googleapis.com https://*.gstatic.com https://www.gstatic.com https://*.cloudfunctions.net; frame-src 'self' https://studymate-ai-bc65e.firebaseapp.com https://*.firebaseapp.com https://accounts.google.com; object-src 'none';";
+
 app.use(helmet({
-  contentSecurityPolicy: false,       // CSP managed separately for frontend
+  contentSecurityPolicy: false,       // Custom CSP middleware applied below
   crossOriginEmbedderPolicy: false,   // Allow external resources
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true }
 }));
+
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", CSP_HEADER_VALUE);
+  next();
+});
 
 // 4. Body parser with size limits
 app.use(express.json({ limit: "100kb" }));
@@ -199,7 +242,7 @@ const ALLOWED_STATIC_FILES = new Set([
   'app.js', 'admin.js', 'verify.js', 'recover.js', 'reset.js', '404.js',
   'style.css', 'skeleton.css', 'admin.css', 'notification.css',
   'notificationBell.js', 'disposableEmailValidator.js', 'adminSecurityLogs.js', 'adminSignupLogs.js',
-  'spaNavigation.js', 'modelRegistryClient.js', 'adminModelRegistry.js', 'adminAuthHelper.js',
+  'spaNavigation.js', 'modelRegistryClient.js', 'adminModelRegistry.js', 'adminAuthHelper.js', 'legal.js',
   'faq.json', 'features.json', 'knowledge.json', 'firebase.js'
 ]);
 
@@ -303,22 +346,20 @@ app.get("/api/models", async (req, res) => {
 // POST /api/chat — proxy to OpenRouter with fallback
 // ---------------------------------------------------------------------------
 
-const MODEL_FALLBACKS = [
-  "google/gemma-4-31b-it:free",
-  "cohere/north-mini-code:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "apodex/apodex-1.1-mini:free"
-];
-
 const MODEL_TIMEOUT_MS = 25000;
 
 app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
   const start = Date.now();
   try {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
+    const configCheck = aiService.validateConfig();
+    const apiKey = aiService.apiKey || process.env.OPENROUTER_API_KEY;
+    if (!configCheck.valid || !apiKey) {
       log.fatal("OPENROUTER_API_KEY is missing from environment.");
-      return res.status(500).json({ error: "AI Service is not configured. Please check server logs." });
+      return res.status(500).json({
+        error: "AI Service is not configured. OPENROUTER_API_KEY is missing from server environment. Please set OPENROUTER_API_KEY in server/.env or Render Dashboard.",
+        code: "CONFIG_ERROR",
+        missingVariable: "OPENROUTER_API_KEY"
+      });
     }
 
     // userId is now ALWAYS derived from verified Firebase token (VULN-08/10)
@@ -387,9 +428,9 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
     if (normalizedMode === "coding") modelRole = "coding_assistant";
     else if (normalizedMode === "exam") modelRole = "exam_revision";
 
-    const userModelChoice = req.body.model_choice || req.body.model || null;
-    const authoritativeChain = await modelRegistry.buildCandidateChain(modelRole, userModelChoice);
-    const selectedModel = authoritativeChain[0] || selectModel(intent);
+    const userModelChoice = req.body.model_choice || req.body.model || req.body.userProfile?.model_choice || null;
+    const reqId = Math.random().toString(36).substring(2, 9);
+    log.info({ reqId, userId, role: modelRole, mode: normalizedMode, userModelChoice }, `[REQ-${reqId}] AI request received`);
 
     // 6. Check cache (with bypass logic)
     // --- RAG Integration: Use classifier to determine if retrieval is needed ---
@@ -465,10 +506,12 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
       { role: "system", content: systemPrompt }
     ];
 
-    // Add session history context (last 5 messages)
+    // Add session history context (last 5 messages) with standard role mapping
     const historyContext = messages.slice(-6, -1); // Exclude the latest user message which we add below
     historyContext.forEach(msg => {
-      finalMessages.push({ role: "user", content: msg.content, name: msg.role === "user" ? "User" : "StudyMate" });
+      const msgRole = String(msg.role || '').toLowerCase();
+      const standardRole = (msgRole === 'user') ? 'user' : 'assistant';
+      finalMessages.push({ role: standardRole, content: String(msg.content || '') });
     });
 
     // If evaluating, include the question being answered
@@ -477,45 +520,6 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
     }
 
     finalMessages.push({ role: "user", content: latestUserMessage });
-
-    // 6. Build model chain with cooldown awareness from Centralized Registry
-    const now = Date.now();
-    let candidateChain = authoritativeChain.filter(model => {
-      const record = failureTracker.get(model);
-      if (record && now < record.expiry) {
-        const remainingStr = ((record.expiry - now) / 1000).toFixed(1);
-        console.log(`[Zero-Failure] Skipping benched model: ${model} (Cooling down for ${remainingStr}s, Reason: ${record.reason})`);
-        return false;
-      }
-      return true;
-    });
-
-    if (candidateChain.length === 0) {
-      if (now - lastProbeTime > PROBE_INTERVAL_MS) {
-        const fullChain = authoritativeChain;
-        let eligibleProbe = null;
-        for (const m of fullChain) {
-           const record = failureTracker.get(m);
-           if (!record) { eligibleProbe = m; break; }
-           const reason = record.reason || "";
-           if (!reason.includes("PROVIDER_AUTH_ERROR") && !reason.includes("INSUFFICIENT_CREDITS")) {
-              eligibleProbe = m;
-              break;
-           }
-        }
-        
-        if (eligibleProbe) {
-           lastProbeTime = now;
-           console.log(`[Zero-Failure] All models benched. Initiating controlled probe on ${eligibleProbe}`);
-           candidateChain = [eligibleProbe];
-        } else {
-           console.log(`[Zero-Failure] All models benched, but no eligible models for probing (hard auth/credit errors).`);
-        }
-      } else {
-        const remainingProbe = ((PROBE_INTERVAL_MS - (now - lastProbeTime)) / 1000).toFixed(1);
-        console.log(`[Zero-Failure] All models benched. Probe on cooldown for ${remainingProbe}s.`);
-      }
-    }
 
     // 7. Support Streaming if requested
     if (req.body.stream) {
@@ -526,153 +530,33 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
         "X-Accel-Buffering": "no" // Disable buffering for Nginx
       });
       res.flushHeaders();
-      // If compression or a proxy is used, they might need an explicit flush
       if (typeof res.flush === "function") res.flush();
 
-      let fullText = "";
-      let success = false;
-      let usedModel = "";
-      let fallbackReason = null;
-      const requestId = Math.random().toString(36).substring(2, 9);
-      console.log(`[REQ-${requestId}] Chat request initialized. stream=true`);
-
-      for (const model of candidateChain) {
-        let streamEventsParsed = 0;
-        let contentTokensReceived = 0;
-        let doneReceived = false;
-        const modelStartTime = Date.now();
-
-        try {
-          console.log(`[REQ-${requestId}] [Zero-Failure Streaming] Attempting model: ${model}`);
-          
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
-
-          console.log(`[REQ-${requestId}] Starting OpenRouter fetch request...`);
-          const streamResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-              "HTTP-Referer": "https://aadirishi.in/",
-              "X-Title": "StudyMate AI"
-            },
-            body: JSON.stringify({
-              model,
-              messages: finalMessages,
-              stream: true,
-              provider: { allow_fallbacks: false }
-            }),
-            signal: controller.signal
-          });
-
-          clearTimeout(timeoutId);
-
-          console.log(`[REQ-${requestId}] Upstream HTTP status: ${streamResponse.status}`);
-          if (!streamResponse.ok) {
-            const rawError = await streamResponse.text().catch(() => "");
-            console.log(`[REQ-${requestId}] Sanitized upstream error: ${rawError.substring(0, 200)}`);
-            throw new Error(`HTTP ${streamResponse.status}: ${rawError}`);
+      let streamResult;
+      try {
+        streamResult = await aiService.executeChatStream({
+          role: modelRole,
+          userChoice: userModelChoice,
+          messages: finalMessages,
+          reqId,
+          timeoutMs: MODEL_TIMEOUT_MS,
+          onChunk: (content) => {
+            res.write(`data: ${JSON.stringify({ content })}\n\n`);
           }
-
-          const reader = streamResponse.body;
-          const decoder = new TextDecoder();
-          const streamReader = reader.getReader();
-          let firstChunk = true;
-          let buffer = "";
-
-          while (true) {
-            const { done, value } = await streamReader.read();
-            if (done) {
-               console.log(`[REQ-${requestId}] Stream reader done.`);
-               break;
-            }
-            
-            if (value && value.length > 0) {
-               // console.log(`[REQ-${requestId}] Stream reader received ${value.length} bytes.`);
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              const cleanedLine = line.trim();
-              if (cleanedLine.startsWith("data: ")) {
-                const dataStr = cleanedLine.slice(6).trim();
-                if (dataStr === "[DONE]") {
-                   doneReceived = true;
-                   console.log(`[REQ-${requestId}] Received [DONE] event.`);
-                   continue; // Keep processing the rest of the buffer
-                }
-                
-                try {
-                  const data = JSON.parse(dataStr);
-                  streamEventsParsed++;
-
-                  if (data.error) {
-                    console.log(`[REQ-${requestId}] Top-level error in stream:`, JSON.stringify(data.error).substring(0, 100));
-                    throw new Error(`STREAM_ERROR: ${data.error.message || "Unknown stream error"}`);
-                  }
-
-                  const content = data.choices?.[0]?.delta?.content;
-                  
-                  if (content !== undefined && content !== null) {
-                    if (firstChunk && content) {
-                      firstChunk = false;
-                      success = true;
-                      usedModel = model;
-                      failureTracker.delete(model);
-                      console.log(`[REQ-${requestId}] Model ${model} marked successful on first content.`);
-                    }
-                    if (content) {
-                      contentTokensReceived++;
-                      fullText += content;
-                      res.write(`data: ${JSON.stringify({ content })}\n\n`);
-                    }
-                  }
-                } catch (e) {
-                  if (e.message.startsWith("STREAM_ERROR")) {
-                     throw e; // Bubble up provider stream errors
-                  }
-                  console.error(`[REQ-${requestId}] Parse error on chunk: ${e.message}`);
-                }
-              }
-            }
-          }
-
-          console.log(`[REQ-${requestId}] Finished loop for ${model}. streamEventsParsed=${streamEventsParsed}, contentTokensReceived=${contentTokensReceived}, doneReceived=${doneReceived}, success=${success}`);
-          if (success) break;
-
-          // If we finish the stream but never got success=true (e.g. empty response)
-          if (!success) {
-            throw new Error("EMPTY_MODEL_RESPONSE");
-          }
-        } catch (error) {
-          const elapsed = Date.now() - modelStartTime;
-          console.error(`[REQ-${requestId}] FAILURE with ${model} after ${elapsed}ms: ${error.message}`);
-          
-          if (!fallbackReason) {
-            if (error.name === "AbortError") fallbackReason = "REQUEST_TIMEOUT";
-            else if (error.message.includes("HTTP 401") || error.message.includes("HTTP 403")) fallbackReason = "PROVIDER_AUTH_ERROR";
-            else if (error.message.includes("HTTP 402")) fallbackReason = "INSUFFICIENT_CREDITS";
-            else if (error.message.includes("HTTP 429")) fallbackReason = "RATE_LIMITED";
-            else if (error.message.includes("STREAM_ERROR")) fallbackReason = error.message;
-            else if (error.message.includes("EMPTY_MODEL_RESPONSE")) fallbackReason = "EMPTY_MODEL_RESPONSE";
-            else fallbackReason = `PROVIDER_ERROR: ${error.message}`;
-            console.log(`[REQ-${requestId}] Fallback reason captured: ${fallbackReason}`);
-          }
-          failureTracker.set(model, { expiry: Date.now() + COOLDOWN_MS, reason: fallbackReason });
-        }
+        });
+      } catch (streamErr) {
+        log.error({ reqId, err: streamErr.message }, `[REQ-${reqId}] Fatal stream execution error`);
+        res.write(`data: ${JSON.stringify({ error: streamErr.message })}\n\n`);
+        res.write("data: [DONE]\n\n");
+        return res.end();
       }
 
-      if (!success) {
-        console.warn(`[REQ-${requestId}] CRITICAL: All models failed. Using safe fallback.`);
-        if (!fallbackReason) {
-            console.log(`[REQ-${requestId}] Branch: candidateChain exhausted, fallbackReason was null.`);
-            fallbackReason = candidateChain.length === 0 ? "ALL_MODELS_IN_COOLDOWN" : "UNKNOWN_AI_ERROR";
-        }
-        console.log(`[REQ-${requestId}] Final fallback reason: ${fallbackReason}`);
+      let fullText = streamResult.fullText;
+      let usedModel = streamResult.usedModel;
+      let fallbackReason = streamResult.fallbackReason;
+
+      if (!streamResult.success) {
+        log.warn({ reqId, fallbackReason }, `[REQ-${reqId}] Candidate chain exhausted. Providing safe fallback.`);
         const fallback = getSafeFallbackReply(latestUserMessage, intent);
         fullText = fallback;
         usedModel = "safe-fallback";
@@ -687,7 +571,7 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
         model_used: usedModel,
         intent: intent,
         doubt: doubt,
-        success: usedModel !== "safe-fallback",
+        success: streamResult.success,
         rag_enhanced: ragResult.enhanced || false,
         rag_debug: ragResult.debug || null,
         fallbackReason: fallbackReason
@@ -699,42 +583,27 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
     }
 
     // --- Legacy JSON Path (Internal fallback or non-stream clients) ---
-    let aiResponse = "";
-    let modelUsed = "";
-    let fallbackReasonLegacy = null;
-
-    for (const model of candidateChain) {
-      try {
-        console.log(`[Zero-Failure] Attempting: ${model}`);
-        const responseData = await callAIModel(apiKey, model, finalMessages);
-
-        if (isValidAIResponse(responseData)) {
-          aiResponse = responseData;
-          modelUsed = model;
-          failureTracker.delete(model);
-          break;
-        } else {
-          if (!fallbackReasonLegacy) fallbackReasonLegacy = "EMPTY_OR_INVALID_RESPONSE";
-          failureTracker.set(model, { expiry: Date.now() + COOLDOWN_MS, reason: fallbackReasonLegacy });
-        }
-      } catch (error) {
-        if (!fallbackReasonLegacy) {
-           if (error.name === "AbortError") fallbackReasonLegacy = "REQUEST_TIMEOUT";
-           else if (error.message.includes("HTTP 401") || error.message.includes("HTTP 403")) fallbackReasonLegacy = "PROVIDER_AUTH_ERROR";
-           else if (error.message.includes("HTTP 402")) fallbackReasonLegacy = "INSUFFICIENT_CREDITS";
-           else if (error.message.includes("HTTP 429")) fallbackReasonLegacy = "RATE_LIMITED";
-           else fallbackReasonLegacy = `PROVIDER_ERROR: ${error.message}`;
-        }
-        failureTracker.set(model, { expiry: Date.now() + COOLDOWN_MS, reason: fallbackReasonLegacy });
-      }
+    let jsonResult;
+    try {
+      jsonResult = await aiService.executeChatCompletion({
+        role: modelRole,
+        userChoice: userModelChoice,
+        messages: finalMessages,
+        reqId,
+        timeoutMs: 15000
+      });
+    } catch (jsonErr) {
+      log.error({ reqId, err: jsonErr.message }, `[REQ-${reqId}] JSON execution error`);
+      return res.status(500).json({ error: jsonErr.message || "AI Service unavailable." });
     }
 
-    if (!aiResponse) {
+    let aiResponse = jsonResult.content;
+    let modelUsed = jsonResult.modelUsed;
+    let fallbackReasonLegacy = jsonResult.fallbackReason;
+
+    if (!jsonResult.success || !aiResponse) {
       aiResponse = getSafeFallbackReply(latestUserMessage, intent);
       modelUsed = "safe-fallback";
-      if (!fallbackReasonLegacy) {
-         fallbackReasonLegacy = candidateChain.length === 0 ? "ALL_MODELS_IN_COOLDOWN" : "UNKNOWN_AI_ERROR";
-      }
     }
 
     const answerBody = String(aiResponse).trim();
@@ -745,12 +614,13 @@ app.post("/api/chat", chatLimiter, requireAuth, async (req, res) => {
       model_used: modelUsed,
       intent: intent,
       doubt: doubt,
-      success: modelUsed !== "safe-fallback",
+      success: jsonResult.success,
       rag_enhanced: ragResult.enhanced || false,
       rag_debug: ragResult.debug || null,
       fallbackReason: fallbackReasonLegacy
     });
 
+    log.info({ reqId, modelUsed, durationMs: Date.now() - start }, `[REQ-${reqId}] Chat request completed`);
     return res.json(finalResult);
 
   } catch (error) {
@@ -777,12 +647,26 @@ function getSafeFallbackReply(query, intent) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function selectModel(intent) {
-  return MODELS[intent] || MODELS.GENERAL;
+function selectModel(intent, mode = "general") {
+  const roleMap = {
+    CODING: "coding_assistant",
+    EXAM: "exam_revision",
+    FAST: "fast_classifier",
+    FALLBACK: "fallback"
+  };
+  const role = (mode === "coding" || intent === "CODING") ? "coding_assistant" : (roleMap[intent] || "general_chat");
+  const model = modelRegistry.inMemoryRegistry?.get(
+    role === "fallback" ? "fallback_model" : (role === "fast_classifier" ? "apodex_mini" : (role === "exam_revision" ? "general_chat" : role))
+  );
+  return model?.provider_id || "google/gemma-4-31b-it:free";
 }
 
-function buildModelCandidates(selectedModel) {
-  const ordered = [selectedModel, ...MODEL_FALLBACKS];
+function buildModelCandidates(selectedModel, role = "general_chat") {
+  const fallbacks = Array.from(modelRegistry.inMemoryRegistry.values())
+    .filter(m => Array.isArray(m.roles) && m.roles.includes("fallback") && m.enabled)
+    .sort((a, b) => (a.fallback_priority || 99) - (b.fallback_priority || 99))
+    .map(m => m.provider_id);
+  const ordered = [selectedModel, ...fallbacks];
   return [...new Set(ordered.filter(Boolean))];
 }
 
@@ -961,14 +845,15 @@ ${sanitizedMessage}
 `;
 
   try {
-    const classifierModel = (await modelRegistry.resolveModelForRole("fast_classifier"))?.provider_id || IDENTITY_CLASSIFIER_MODEL;
-    const result = await fetchWithRetry(
-      () => callAIModel(apiKey, classifierModel, [{ role: "user", content: prompt }]),
-      1
-    );
-    return String(result).trim().toUpperCase().includes("YES");
+    const result = await aiService.executeDirectCompletion({
+      role: "fast_classifier",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.0,
+      maxTokens: 5
+    });
+    return String(result.content).trim().toUpperCase().includes("YES");
   } catch (error) {
-    console.error("Identity detection failed:", error.message);
+    log.warn({ err: error.message }, "Identity detection fallback");
     return false;
   }
 }
@@ -998,55 +883,19 @@ async function handleIdentityQuery(apiKey, userMessage) {
 // fetchWithRetry removed (moved to primary helper section)
 
 async function callAIModel(apiKey, model, messages) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000); // Strict 8s timeout
-
-  // PRE-FLIGHT SAFETY CHECK (CRITICAL: 100% Free enforcement & Authoritative Registry)
-  const isAuthorized = model === IDENTITY_CLASSIFIER_MODEL || await modelRegistry.isAuthorizedModel(model) || (MODEL_POOL.includes(model) && model.endsWith(":free"));
+  const isAuthorized = await modelRegistry.isAuthorizedModel(model);
   if (!isAuthorized) {
-    throw new Error(`CRITICAL BLOCKED: Model ${model} is not authorized in Model Registry or not free.`);
+    throw new Error(`CRITICAL BLOCKED: Model ${model} is not authorized in Model Registry or not enabled.`);
   }
 
-  try {
-    const requestBody = {
-      model,
-      messages,
-      provider: {
-        allow_fallbacks: false // Disable provider-level paid fallbacks
-      }
-    };
+  const result = await aiService.executeDirectCompletion({
+    providerId: model,
+    messages,
+    timeoutMs: 8000
+  });
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://aadirishi.in/",
-        "X-Title": "StudyMate AI"
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
-    });
-
-    if (!response.ok) {
-      const rawError = await response.text();
-      throw new Error(`OpenRouter HTTP ${response.status}: ${rawError}`);
-    }
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
-
-    if (!content) throw new Error("Empty response from provider.");
-
-    return String(content);
-  } catch (error) {
-    if (error.name === "AbortError") {
-      throw new Error("Timeout: AI model took too long (>8s).");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  if (!result.content) throw new Error("Empty response from provider.");
+  return String(result.content);
 }
 
 /**
@@ -1332,44 +1181,53 @@ async function fetchNewsData(query) {
 // Start
 // ---------------------------------------------------------------------------
 
-const serverStartupStart = Date.now();
-const server = app.listen(PORT, () => {
-  const totalStartupTime = Date.now() - serverStartupStart;
-  const firebaseStatus = require('./services/firebaseAdmin');
-  
-  log.info({ 
-    port: PORT,
-    startupTimeMs: totalStartupTime,
-    firebaseInitMs: firebaseStatus.initDurationMs || 0
-  }, `StudyMate AI Backend running on http://localhost:${PORT}`);
-});
-
-// Graceful Shutdown
-function gracefulShutdown(signal) {
-  log.info(`[Server] Received ${signal}. Shutting down gracefully...`);
-  
-  server.close(async () => {
-    log.info('[Server] Closed out remaining connections.');
+let server = null;
+if (require.main === module) {
+  const serverStartupStart = Date.now();
+  server = app.listen(PORT, () => {
+    const totalStartupTime = Date.now() - serverStartupStart;
+    const firebaseStatus = require('./services/firebaseAdmin');
     
-    try {
-      const firebaseStatus = require('./services/firebaseAdmin');
-      if (firebaseStatus.isInitialized && firebaseStatus.app) {
-        await firebaseStatus.app.delete();
-        log.info('[Firebase Admin] Resources released cleanly.');
-      }
-    } catch (e) {
-      log.error({ err: e }, '[Firebase Admin] Error during cleanup.');
-    }
-    
-    process.exit(0);
+    log.info({ 
+      port: PORT,
+      startupTimeMs: totalStartupTime,
+      firebaseInitMs: firebaseStatus.initDurationMs || 0
+    }, `StudyMate AI Backend running on http://localhost:${PORT}`);
   });
-  
-  // Force close after 10s
-  setTimeout(() => {
-    log.error('[Server] Could not close connections in time, forcefully shutting down');
-    process.exit(1);
-  }, 10000);
+
+  // Graceful Shutdown
+  function gracefulShutdown(signal) {
+    log.info(`[Server] Received ${signal}. Shutting down gracefully...`);
+    
+    if (server) {
+      server.close(async () => {
+        log.info('[Server] Closed out remaining connections.');
+        
+        try {
+          const firebaseStatus = require('./services/firebaseAdmin');
+          if (firebaseStatus.isInitialized && firebaseStatus.app) {
+            await firebaseStatus.app.delete();
+            log.info('[Firebase Admin] Resources released cleanly.');
+          }
+        } catch (e) {
+          log.error({ err: e }, '[Firebase Admin] Error during cleanup.');
+        }
+        
+        process.exit(0);
+      });
+      
+      // Force close after 10s
+      setTimeout(() => {
+        log.error('[Server] Could not close connections in time, forcefully shutting down');
+        process.exit(1);
+      }, 10000);
+    } else {
+      process.exit(0);
+    }
+  }
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+module.exports = { app, server };
