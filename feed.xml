@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>StudyMate AI Updates</title>
-  <subtitle>The latest features and updates from your AI study assistant.</subtitle>
+  <subtitle>The latest features and updates from your AI study companion.</subtitle>
   <link href="https://aadirishi.in/feed.xml" rel="self" />
   <link href="https://aadirishi.in/" />
   <id>urn:uuid:60a76c80-d399-11d9-b91C-0003939e0af6</id>

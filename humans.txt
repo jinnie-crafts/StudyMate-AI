@@ -1,5 +1,5 @@
 /* TEAM */
-  Developer: StudyMate AI Team
+  Developer: Rishu Maurya
   Contact: karshsecurities@gmail.com
   From: Earth
 

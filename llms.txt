@@ -10,7 +10,8 @@ StudyMate AI is a personalized smart learning assistant designed for students, t
 - **Multilingual Support**: Includes Hinglish toggle.
 - **Progress Tracking**: Daily streak and question trackers.
 
-## Organization
+## Organization & Developer
 Website: https://aadirishi.in
+Developer: Rishu Maurya
 Contact: karshsecurities@gmail.com
 Launched: 31 May 2026

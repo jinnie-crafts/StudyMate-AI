@@ -3,10 +3,9 @@
  * 
  * Single source of truth for:
  * - Application roles (general_chat, coding_assistant, exam_revision, fast_classifier, security_guardrail, fallback)
- * - Internal keys vs Friendly display names vs Provider IDs
- * - Admin-configurable models stored in Firestore with in-memory caching
- * - Candidate fallback chains, zero-downtime failover, and OpenRouter connection testing
- * - Idempotent reconciliation between canonical production models and database state
+ * - Separation of: Internal keys (stable ID) vs Display names (UI label) vs Provider IDs (upstream OpenRouter ID)
+ * - Admin-configurable dynamic models stored in Firestore with real-time sync and memory caching
+ * - Dynamic candidate chains, zero-downtime failover, connection testing, and safe deletion
  */
 
 const fs = require('fs');
@@ -37,11 +36,11 @@ try {
   log.warn({ err: e.message }, '[ModelRegistry] Firebase Admin initialization skipped, running in-memory');
 }
 
-const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds backup TTL
 let memoryRegistryCache = null;
 let lastCacheFetchTime = 0;
 
-// Authoritative Production Models — Strictly locked to 4 approved OpenRouter models
+// Canonical initial seed models (used to bootstrap empty registry or recovery)
 const CANONICAL_PRODUCTION_MODELS = [
   {
     internal_key: "general_chat",
@@ -97,27 +96,6 @@ const CANONICAL_PRODUCTION_MODELS = [
   }
 ];
 
-const APPROVED_MODEL_KEYS = new Set([
-  "general_chat",
-  "coding_assistant",
-  "fallback_model",
-  "apodex_mini"
-]);
-
-const APPROVED_PROVIDER_IDS = new Set([
-  "google/gemma-4-31b-it:free",
-  "cohere/north-mini-code:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "apodex/apodex-1.1-mini:free"
-]);
-
-const APPROVED_KEY_TO_PROVIDER = {
-  general_chat: "google/gemma-4-31b-it:free",
-  coding_assistant: "cohere/north-mini-code:free",
-  fallback_model: "google/gemma-4-26b-a4b-it:free",
-  apodex_mini: "apodex/apodex-1.1-mini:free"
-};
-
 // Map legacy preference keys to canonical internal keys
 const LEGACY_KEY_ALIASES = {
   deepseek: "general_chat",
@@ -157,6 +135,36 @@ class ModelRegistryService {
   constructor() {
     this.inMemoryRegistry = new Map(CANONICAL_PRODUCTION_MODELS.map(m => [m.internal_key, { ...m }]));
     this.reconciled = false;
+    this.listenerInitialized = false;
+    this._initFirestoreListener();
+  }
+
+  /**
+   * Set up real-time listener for Firestore collection if available
+   */
+  _initFirestoreListener() {
+    if (this.listenerInitialized || !db || typeof db.collection !== 'function') return;
+    try {
+      this.listenerInitialized = true;
+      db.collection('model_registry').onSnapshot(snapshot => {
+        if (!snapshot || snapshot.empty) return;
+        snapshot.docChanges().forEach(change => {
+          const key = change.doc.id;
+          const data = change.doc.data();
+          if (change.type === 'removed') {
+            this.inMemoryRegistry.delete(key);
+          } else {
+            this.inMemoryRegistry.set(key, { internal_key: key, ...data });
+          }
+        });
+        this.invalidateCache();
+        log.info('[ModelRegistry] Real-time registry update received from Firestore');
+      }, err => {
+        log.warn({ err: err.message }, '[ModelRegistry] Firestore snapshot listener warning (using polling)');
+      });
+    } catch (e) {
+      log.warn({ err: e.message }, '[ModelRegistry] Could not attach Firestore snapshot listener');
+    }
   }
 
   /**
@@ -168,86 +176,70 @@ class ModelRegistryService {
   }
 
   /**
-   * Idempotent reconciliation: Reconciles stored registry models against the 4 canonical models.
-   * - Enforces approved provider IDs locked to whitelist
-   * - Purges obsolete models (deepseek_r1, llama_3_3_70b, qwen_2_5_72b, etc.)
-   * - Persists updates and deletions to Firestore if connected
+   * Safe reconciliation on startup:
+   * - If no models exist in storage, seeds with initial canonical models.
+   * - If models exist, preserves all administrator modifications (custom names, custom provider IDs, custom models).
+   * - Never deletes or overwrites intentional administrator additions or configurations.
    */
   async reconcileModels(existingModelsList = []) {
     const existingMap = new Map((existingModelsList || []).map(m => [m.internal_key, { ...m }]));
-    const reconciledMap = new Map();
     const batchUpdates = [];
-    const obsoleteDocsToDelete = [];
 
-    // 1. Process all approved canonical models
-    for (const canonical of CANONICAL_PRODUCTION_MODELS) {
-      const key = canonical.internal_key;
-      const existing = existingMap.get(key);
-
-      if (!existing) {
-        // Missing canonical model: add it
-        const newModel = {
+    // If completely empty, seed with initial canonical models
+    if (existingMap.size === 0) {
+      for (const canonical of CANONICAL_PRODUCTION_MODELS) {
+        const seededModel = {
           ...canonical,
           updated_at: new Date().toISOString(),
           managed_by: "system",
           is_custom: false,
           schema_version: 2
         };
-        reconciledMap.set(key, newModel);
-        batchUpdates.push({ key, record: newModel });
-      } else {
-        // Enforce approved provider_id whitelist strictly
-        const providerId = APPROVED_KEY_TO_PROVIDER[key] || canonical.provider_id;
-        const reconciledModel = {
-          ...canonical,
-          display_name: existing.display_name || canonical.display_name,
-          description: existing.description !== undefined ? existing.description : canonical.description,
-          provider_id: providerId, // Locked to approved provider ID
-          roles: Array.isArray(existing.roles) && existing.roles.length > 0 ? existing.roles : canonical.roles,
-          capabilities: Array.isArray(existing.capabilities) && existing.capabilities.length > 0 ? existing.capabilities : canonical.capabilities,
-          fallback_priority: existing.fallback_priority !== undefined ? Number(existing.fallback_priority) : canonical.fallback_priority,
-          is_default: existing.is_default !== undefined ? Boolean(existing.is_default) : canonical.is_default,
-          enabled: existing.enabled !== undefined ? Boolean(existing.enabled) : canonical.enabled,
-          schema_version: 2,
-          managed_by: existing.managed_by || "system",
-          updated_at: new Date().toISOString()
-        };
-        reconciledMap.set(key, reconciledModel);
-        batchUpdates.push({ key, record: reconciledModel });
+        this.inMemoryRegistry.set(canonical.internal_key, seededModel);
+        batchUpdates.push({ key: canonical.internal_key, record: seededModel });
       }
-    }
 
-    // 2. Identify any obsolete/unapproved models to purge
-    for (const [key] of existingMap.entries()) {
-      if (!APPROVED_MODEL_KEYS.has(key)) {
-        obsoleteDocsToDelete.push(key);
-      }
-    }
-
-    // 3. Persist batch updates and deletions to Firestore if connected
-    if (db && typeof db.collection === 'function') {
-      try {
-        const batch = db.batch();
-        for (const update of batchUpdates) {
-          const docRef = db.collection('model_registry').doc(update.key);
-          batch.set(docRef, update.record, { merge: true });
+      if (db && typeof db.collection === 'function' && batchUpdates.length > 0) {
+        try {
+          const batch = db.batch();
+          for (const update of batchUpdates) {
+            const docRef = db.collection('model_registry').doc(update.key);
+            batch.set(docRef, update.record, { merge: true });
+          }
+          await batch.commit();
+          log.info({ count: batchUpdates.length }, '[ModelRegistry] Seeded initial models into Firestore');
+        } catch (err) {
+          log.warn({ err: err.message }, '[ModelRegistry] Seeding Firestore error (running in-memory)');
         }
-        for (const delKey of obsoleteDocsToDelete) {
-          const docRef = db.collection('model_registry').doc(delKey);
-          batch.delete(docRef);
+      }
+    } else {
+      // Existing models found: populate memory registry preserving administrator configurations
+      this.inMemoryRegistry.clear();
+      for (const [key, model] of existingMap.entries()) {
+        this.inMemoryRegistry.set(key, model);
+      }
+
+      // Check if core essential roles have at least one enabled default model.
+      // If a canonical role is completely missing, safely bootstrap it without touching existing ones.
+      for (const canonical of CANONICAL_PRODUCTION_MODELS) {
+        if (!this.inMemoryRegistry.has(canonical.internal_key)) {
+          const missingModel = {
+            ...canonical,
+            updated_at: new Date().toISOString(),
+            managed_by: "system",
+            is_custom: false,
+            schema_version: 2
+          };
+          this.inMemoryRegistry.set(canonical.internal_key, missingModel);
+          if (db && typeof db.collection === 'function') {
+            db.collection('model_registry').doc(canonical.internal_key).set(missingModel, { merge: true }).catch(() => {});
+          }
         }
-        await batch.commit();
-        log.info({ updateCount: batchUpdates.length, deletedCount: obsoleteDocsToDelete.length },
-          '[ModelRegistry] Reconciled 4 whitelist models and purged obsolete models from Firestore');
-      } catch (err) {
-        log.warn({ err: err.message }, '[ModelRegistry] Firestore batch reconciliation error (falling back to in-memory)');
       }
     }
 
-    // 4. Update in-memory registry strictly with the 4 approved models
-    this.inMemoryRegistry = reconciledMap;
     this.reconciled = true;
-    return Array.from(reconciledMap.values());
+    return Array.from(this.inMemoryRegistry.values());
   }
 
   /**
@@ -272,10 +264,13 @@ class ModelRegistryService {
             });
           });
 
-          // Run reconciliation once on load to guarantee accuracy
           const reconciledModels = this.reconciled 
             ? models 
             : await this.reconcileModels(models);
+
+          // Update memory registry map with the loaded models
+          this.inMemoryRegistry.clear();
+          reconciledModels.forEach(m => this.inMemoryRegistry.set(m.internal_key, m));
 
           memoryRegistryCache = reconciledModels;
           lastCacheFetchTime = now;
@@ -329,44 +324,51 @@ class ModelRegistryService {
 
     const all = await this.getAllModels({ enabledOnly: true });
 
+    // Look for an enabled model marked as default for this role
+    const defaultForRole = all.find(m =>
+      m.is_default &&
+      Array.isArray(m.roles) &&
+      (m.roles.includes(role) || (role === 'exam_revision' && m.roles.includes('general_chat')))
+    );
+    if (defaultForRole) return defaultForRole;
+
+    // Next look for any enabled model assigned to this role
+    const roleModel = all.find(m =>
+      Array.isArray(m.roles) &&
+      (m.roles.includes(role) || (role === 'exam_revision' && m.roles.includes('general_chat')))
+    );
+    if (roleModel) return roleModel;
+
+    // Fallbacks based on role type
     if (role === 'coding_assistant') {
       const coding = all.find(m => m.internal_key === 'coding_assistant');
       if (coding) return coding;
     }
-    if (role === 'general_chat' || role === 'exam_revision') {
-      const general = all.find(m => m.internal_key === 'general_chat');
-      if (general) return general;
-    }
     if (role === 'fast_classifier') {
       const fast = all.find(m => m.internal_key === 'apodex_mini') ||
-                   all.find(m => m.internal_key === 'fallback_model') ||
+                   all.find(m => Array.isArray(m.roles) && m.roles.includes('fallback')) ||
                    all.find(m => m.internal_key === 'general_chat');
       if (fast) return fast;
     }
-    if (role === 'security_guardrail') {
-      const security = all.find(m => m.internal_key === 'fallback_model') ||
-                       all.find(m => m.internal_key === 'general_chat');
-      if (security) return security;
-    }
-    if (role === 'fallback') {
+    if (role === 'security_guardrail' || role === 'fallback') {
       const fb = all.find(m => m.internal_key === 'fallback_model') ||
-                 all.find(m => m.internal_key === 'apodex_mini') ||
+                 all.find(m => Array.isArray(m.roles) && m.roles.includes('fallback')) ||
                  all.find(m => m.internal_key === 'general_chat');
       if (fb) return fb;
     }
 
-    return all.find(m => m.internal_key === 'general_chat') || CANONICAL_PRODUCTION_MODELS[0];
+    return all.find(m => m.internal_key === 'general_chat') || all[0] || CANONICAL_PRODUCTION_MODELS[0];
   }
 
   /**
    * Build an ordered candidate chain of OpenRouter provider IDs.
    * Ensures:
    * - User choices are verified against permitted roles and enabled status.
-   * - Internal roles (fast_classifier, security_guardrail) cannot be user-selected.
+   * - Internal roles (fast_classifier, security_guardrail) cannot be user-selected in chat.
    * - Role default model is included.
    * - Fallback models are ordered by fallback_priority.
    * - Disabled models are excluded.
-   * - Only approved whitelist provider IDs are returned.
+   * - Outgoing chain consists of valid provider_id strings.
    * 
    * @param {string} role - application role (e.g. 'general_chat', 'coding_assistant', 'exam_revision')
    * @param {string} [userChoiceKey] - user's preferred internal_key or provider_id from settings
@@ -388,11 +390,14 @@ class ModelRegistryService {
         (m.internal_key === normalizedUserKey || m.provider_id === normalizedUserKey) && m.enabled
       );
 
-      if (preferred && preferred.provider_id && APPROVED_PROVIDER_IDS.has(preferred.provider_id)) {
-        const isFallbackOnly = preferred.internal_key === 'fallback_model' || preferred.internal_key === 'apodex_mini';
-        const hasRequestedRole = Array.isArray(preferred.roles) && (preferred.roles.includes(effectiveRole) || (effectiveRole === 'exam_revision' && preferred.roles.includes('general_chat')));
+      if (preferred && preferred.provider_id) {
+        // Prevent user from selecting pure internal utility models if not assigned to user roles
+        const isInternalOnly = Array.isArray(preferred.roles) &&
+          preferred.roles.every(r => INTERNAL_ONLY_ROLES.includes(r));
+        const hasRequestedRole = Array.isArray(preferred.roles) &&
+          (preferred.roles.includes(effectiveRole) || (effectiveRole === 'exam_revision' && preferred.roles.includes('general_chat')));
 
-        if (!isFallbackOnly && hasRequestedRole) {
+        if (!isInternalOnly && hasRequestedRole) {
           candidates.push(preferred.provider_id);
           log.info({ role: effectiveRole, userChoice: normalizedUserKey, provider_id: preferred.provider_id },
             '[ModelRegistry] User model choice validated and prioritized in candidate chain');
@@ -412,33 +417,37 @@ class ModelRegistryService {
       candidates.push(roleDefault.provider_id);
     }
 
-    // 3. Fallback models ordered by fallback_priority (fallback_model then apodex_mini)
+    // 3. Fallback models ordered by fallback_priority
     const fallbacks = all
-      .filter(m => m.internal_key === "fallback_model" || m.internal_key === "apodex_mini" || (Array.isArray(m.roles) && m.roles.includes("fallback")))
+      .filter(m => Array.isArray(m.roles) && m.roles.includes("fallback"))
       .sort((a, b) => (a.fallback_priority || 99) - (b.fallback_priority || 99));
 
     for (const fb of fallbacks) {
-      if (fb.provider_id && APPROVED_PROVIDER_IDS.has(fb.provider_id) && !candidates.includes(fb.provider_id)) {
+      if (fb.provider_id && !candidates.includes(fb.provider_id)) {
         candidates.push(fb.provider_id);
       }
     }
 
     // 4. Safe recovery if candidates list is empty
     if (candidates.length === 0) {
-      log.error({ role: effectiveRole }, '[ModelRegistry] No enabled candidates found, loading canonical defaults');
-      candidates.push(CANONICAL_PRODUCTION_MODELS[0].provider_id);
+      const anyActive = all.find(m => m.provider_id);
+      if (anyActive) {
+        candidates.push(anyActive.provider_id);
+      } else {
+        candidates.push(CANONICAL_PRODUCTION_MODELS[0].provider_id);
+      }
     }
 
-    // Strict whitelist: candidates can only consist of approved provider IDs
-    return [...new Set(candidates.filter(id => APPROVED_PROVIDER_IDS.has(id)))];
+    return [...new Set(candidates)];
   }
 
   /**
    * Check if a given provider_id is authorized by the registry.
+   * Any registered and enabled model's provider_id is authorized.
    * Optionally verifies authorization for a specific application role.
    */
   async isAuthorizedModel(providerId, role = null) {
-    if (!providerId || !APPROVED_PROVIDER_IDS.has(providerId)) return false;
+    if (!providerId) return false;
     const all = await this.getAllModels({ enabledOnly: true });
     const matching = all.filter(m => (m.provider_id === providerId || m.internal_key === providerId) && m.enabled === true);
     if (matching.length === 0) return false;
@@ -447,7 +456,8 @@ class ModelRegistryService {
       if (INTERNAL_ONLY_ROLES.includes(role)) {
         return matching.some(m => Array.isArray(m.roles) && m.roles.includes(role));
       }
-      if (matching.some(m => Array.isArray(m.roles) && (m.roles.includes('fallback') || m.internal_key.includes('fallback')))) {
+      // Fallback role can back up other roles
+      if (matching.some(m => Array.isArray(m.roles) && m.roles.includes('fallback'))) {
         return true;
       }
       return matching.some(m => Array.isArray(m.roles) && (m.roles.includes(role) || (role === 'exam_revision' && m.roles.includes('general_chat'))));
@@ -462,8 +472,8 @@ class ModelRegistryService {
   validateModelData(data, isNew = false) {
     const errors = [];
     if (isNew) {
-      if (!data.internal_key || typeof data.internal_key !== 'string' || !/^[a-z0-9_]{2,40}$/.test(data.internal_key)) {
-        errors.push("Internal key must be 2-40 characters lowercase alphanumeric and underscores only.");
+      if (!data.internal_key || typeof data.internal_key !== 'string' || !/^[a-z0-9_]{2,50}$/.test(data.internal_key.trim().toLowerCase())) {
+        errors.push("Internal key must be 2-50 characters lowercase alphanumeric and underscores only.");
       }
     }
 
@@ -471,8 +481,8 @@ class ModelRegistryService {
       errors.push("Display name must be at least 2 characters.");
     }
 
-    if (!data.provider_id || typeof data.provider_id !== 'string' || !data.provider_id.includes('/')) {
-      errors.push("OpenRouter model ID must follow the 'organization/model-name[:variant]' format.");
+    if (!data.provider_id || typeof data.provider_id !== 'string' || !/^[a-zA-Z0-9_\-\.]+\/[a-zA-Z0-9_\-\.:]+$/.test(data.provider_id.trim())) {
+      errors.push("OpenRouter provider ID must follow the 'organization/model-name[:variant]' format (e.g. google/gemma-4-31b-it:free).");
     }
 
     if (data.roles && !Array.isArray(data.roles)) {
@@ -483,38 +493,25 @@ class ModelRegistryService {
   }
 
   /**
-   * Save (create or update) a model configuration
-   */
-  /**
-   * Save (update) a model configuration.
-   * Creation of new unapproved model keys is strictly disallowed.
-   * Provider IDs are locked to the approved whitelist.
+   * Save (create or update) a dynamic model configuration.
+   * Administrators can add models, change display names, and update OpenRouter provider IDs.
    */
   async saveModel(data, adminUser = null) {
     const isNew = !data.is_edit;
-    const key = (data.internal_key || "").trim();
+    const key = (data.internal_key || "").trim().toLowerCase();
     if (!key) throw new Error("Internal key is required.");
-
-    // Strict whitelist: Only the 4 approved models can exist
-    if (!APPROVED_MODEL_KEYS.has(key)) {
-      throw new Error(`Model creation is restricted. Only the 4 approved models (${Array.from(APPROVED_MODEL_KEYS).join(', ')}) are permitted in the registry.`);
-    }
 
     const existing = await this.getModelByKey(key);
     if (isNew && existing) {
       throw new Error(`A model with internal key '${key}' already exists.`);
     }
+    if (!isNew && !existing) {
+      throw new Error(`Model with key '${key}' not found for editing.`);
+    }
 
     // Merge with existing record if editing
     const mergedData = (!isNew && existing) ? { ...existing, ...data } : { ...data };
     mergedData.internal_key = key;
-
-    // Lock provider ID to approved whitelist value
-    const approvedProviderId = APPROVED_KEY_TO_PROVIDER[key];
-    if (mergedData.provider_id && mergedData.provider_id.trim() !== approvedProviderId) {
-      throw new Error(`Provider ID for '${key}' is locked to '${approvedProviderId}'. Custom provider IDs cannot bypass whitelist.`);
-    }
-    mergedData.provider_id = approvedProviderId;
 
     const validationErrors = this.validateModelData(mergedData, isNew);
     if (validationErrors.length > 0) {
@@ -533,17 +530,19 @@ class ModelRegistryService {
       ? mergedData.capabilities.map(c => String(c).trim()).filter(Boolean)
       : (typeof mergedData.capabilities === 'string' ? mergedData.capabilities.split(',').map(c => c.trim()).filter(Boolean) : ["chat"]);
 
+    const cleanProviderId = String(mergedData.provider_id).trim();
+
     const modelRecord = {
       internal_key: key,
       display_name: String(mergedData.display_name).trim(),
-      provider_id: approvedProviderId,
+      provider_id: cleanProviderId,
       description: (mergedData.description || "").trim(),
       capabilities: cleanCapabilities,
       roles: cleanRoles,
       enabled: mergedData.enabled !== false,
       is_default: Boolean(mergedData.is_default),
       fallback_priority: Number.isInteger(Number(mergedData.fallback_priority)) ? Number(mergedData.fallback_priority) : 1,
-      is_custom: true,
+      is_custom: isNew ? true : (existing?.is_custom ?? false),
       managed_by: "admin",
       schema_version: 2,
       updated_at: new Date().toISOString(),
@@ -568,9 +567,12 @@ class ModelRegistryService {
     // Update in-memory registry
     this.inMemoryRegistry.set(key, modelRecord);
     this.invalidateCache();
+
+    // Clear failure tracker for old and new provider IDs
     try {
       const aiService = require('./aiService');
-      aiService.failureTracker.delete(modelRecord.provider_id);
+      if (existing?.provider_id) aiService.failureTracker.delete(existing.provider_id);
+      aiService.failureTracker.delete(cleanProviderId);
     } catch (e) {}
 
     log.info({ key, provider_id: modelRecord.provider_id, admin: modelRecord.updated_by }, '[ModelRegistry] Saved model configuration');
@@ -603,7 +605,7 @@ class ModelRegistryService {
 
   /**
    * Delete a model from registry.
-   * Whitelist models are protected from deletion.
+   * Protects active configurations: prevents deleting if it is the sole active default for a core role.
    */
   async deleteModel(key, adminUser = null) {
     if (!key) throw new Error("Missing model key.");
@@ -612,8 +614,20 @@ class ModelRegistryService {
       throw new Error(`Model '${key}' not found.`);
     }
 
-    if (APPROVED_MODEL_KEYS.has(key)) {
-      throw new Error(`Cannot delete '${existing.display_name}'. The 4 whitelist models cannot be deleted from the system. You may disable this model instead.`);
+    const all = await this.getAllModels({ enabledOnly: true });
+
+    // Protect core roles: ensure at least one other enabled model can serve each assigned role
+    const coreRoles = (existing.roles || []).filter(r => ['general_chat', 'coding_assistant'].includes(r));
+    for (const role of coreRoles) {
+      const otherEnabledForRole = all.filter(m =>
+        m.internal_key !== key &&
+        m.enabled &&
+        Array.isArray(m.roles) &&
+        m.roles.includes(role)
+      );
+      if (otherEnabledForRole.length === 0) {
+        throw new Error(`Cannot delete '${existing.display_name}'. It is the only enabled model configured for the '${role}' role. Please assign another model to this role first.`);
+      }
     }
 
     // Remove from Firestore
@@ -705,9 +719,6 @@ class ModelRegistryService {
 const modelRegistryInstance = new ModelRegistryService();
 modelRegistryInstance.CANONICAL_PRODUCTION_MODELS = CANONICAL_PRODUCTION_MODELS;
 modelRegistryInstance.BOOTSTRAP_MODELS = CANONICAL_PRODUCTION_MODELS;
-modelRegistryInstance.APPROVED_MODEL_KEYS = APPROVED_MODEL_KEYS;
-modelRegistryInstance.APPROVED_PROVIDER_IDS = APPROVED_PROVIDER_IDS;
-modelRegistryInstance.APPROVED_KEY_TO_PROVIDER = APPROVED_KEY_TO_PROVIDER;
 modelRegistryInstance.LEGACY_KEY_ALIASES = LEGACY_KEY_ALIASES;
 modelRegistryInstance.VALID_ROLES = VALID_ROLES;
 modelRegistryInstance.USER_SELECTABLE_ROLES = USER_SELECTABLE_ROLES;

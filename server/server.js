@@ -95,10 +95,10 @@ const PROBE_INTERVAL_MS = 10000;
 
 let lastIdentityIndex = -1;
 const IDENTITY_RESPONSES = [
-  "StudyMate-AI is developed by Harsh Maurya, Komal Sharma and Ruchii.",
-  "This application is created by Harsh Maurya, Komal Sharma and Ruchii.",
-  "Harsh Maurya, Komal Sharma and Ruchii are the developers of StudyMate-AI.",
-  "StudyMate-AI is built by Harsh Maurya, Komal Sharma and Ruchii."
+  "StudyMate AI is developed by Rishu Maurya.",
+  "This application is created by Rishu Maurya.",
+  "Rishu Maurya is the developer of StudyMate AI.",
+  "StudyMate AI is built by Rishu Maurya."
 ];
 const REALTIME_CACHE_TTL_MS = 5 * 60 * 1000;
 const IDENTITY_CACHE_TTL_MS = 30 * 60 * 1000;

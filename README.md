@@ -125,4 +125,10 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ---
 
-<p align="center">Made with ❤️ for Students</p>
+## 👨‍💻 Developer
+
+StudyMate AI is developed by **Rishu Maurya**.
+
+---
+
+<p align="center">Made with ❤️ for Students by Rishu Maurya</p>

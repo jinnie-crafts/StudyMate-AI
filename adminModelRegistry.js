@@ -1,7 +1,7 @@
 /**
  * StudyMate AI — Admin Panel AI Model Registry
  * 
- * Manages centralized OpenRouter model configurations, provides connection
+ * Manages dynamic OpenRouter model configurations, provides connection
  * testing, capability tagging, role defaults, fallback ordering, and safe deletion.
  * Uses centralized adminAuthHelper for session-aware authentication, 401 token refresh,
  * request deduplication, and rate-limit backoff.
@@ -21,7 +21,7 @@ export async function initModelRegistry() {
 
   if (isRegistryInitialized) {
     if (modelsList.length === 0) {
-      await loadModels();
+      await loadModels(true);
     } else {
       renderTable();
     }
@@ -31,7 +31,7 @@ export async function initModelRegistry() {
   isRegistryInitialized = true;
   setupDom(container);
   bindEvents();
-  await loadModels();
+  await loadModels(true);
 }
 
 function setupDom(container) {
@@ -47,8 +47,12 @@ function setupDom(container) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
             Refresh
           </button>
-          <div style="padding: 8px 14px; background: rgba(124, 58, 237, 0.15); border: 1px solid rgba(124, 58, 237, 0.3); border-radius: 10px; font-size: 0.78rem; color: #c4b5fd; font-weight: 600;">
-            4 Whitelist Models
+          <button id="openAddModelModalBtn" class="primary-btn" style="display: flex; align-items: center; gap: 6px; padding: 10px 18px; font-weight: 600;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Add Model
+          </button>
+          <div id="modelCountBadge" style="padding: 8px 14px; background: rgba(124, 58, 237, 0.15); border: 1px solid rgba(124, 58, 237, 0.3); border-radius: 10px; font-size: 0.78rem; color: #c4b5fd; font-weight: 600;">
+            Loading...
           </div>
         </div>
       </div>
@@ -90,27 +94,30 @@ function setupDom(container) {
     </div>
 
     <!-- Add/Edit Model Modal -->
-    <div id="modelConfigModal" class="modal" style="display: none;">
-      <div class="modal-box glass-card" style="max-width: 580px; text-align: left;">
-        <h3 id="modelModalTitle" style="margin-bottom: 8px; color: var(--text-main);">Configure AI Model</h3>
-        <p style="font-size: 13px; color: var(--text-soft); margin-bottom: 20px;">Changes instantly propagate to Settings and backend AI resolution without app redeployment.</p>
+    <div id="modelConfigModal" class="modal modal-overlay" style="display: none;">
+      <div class="modal-box glass-card" style="max-width: 620px; width: 92%; text-align: left; position: relative;">
+        <button type="button" id="closeModelModalXBtn" style="position: absolute; top: 16px; right: 16px; background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px; line-height: 1;">✕</button>
+        <h3 id="modelModalTitle" style="margin-bottom: 8px; color: var(--text-main); font-size: 1.25rem;">Configure AI Model</h3>
+        <p style="font-size: 13px; color: var(--text-soft); margin-bottom: 18px;">Changes instantly propagate to user Settings and AI runtime resolution without redeployment.</p>
 
-        <form id="modelConfigForm">
+        <form id="modelConfigForm" novalidate>
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
             <div>
               <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-soft);">Internal Key *</label>
               <input type="text" id="modelInternalKey" class="admin-input" placeholder="e.g. general_chat" style="width: 100%; box-sizing: border-box;" required>
+              <span id="modelInternalKeyHint" style="font-size: 11px; color: var(--text-muted); margin-top: 3px; display: block;">Stable internal role/feature identifier</span>
             </div>
             <div>
               <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-soft);">Display Name *</label>
-              <input type="text" id="modelDisplayName" class="admin-input" placeholder="e.g. Llama 3.3 70B (Free)" style="width: 100%; box-sizing: border-box;" required>
+              <input type="text" id="modelDisplayName" class="admin-input" placeholder="e.g. My Smart Study Model" style="width: 100%; box-sizing: border-box;" required>
+              <span style="font-size: 11px; color: var(--text-muted); margin-top: 3px; display: block;">Label displayed in Settings & UI</span>
             </div>
           </div>
 
           <div style="margin-bottom: 14px;">
-            <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-soft);">OpenRouter Model ID *</label>
-            <input type="text" id="modelProviderId" class="admin-input" placeholder="e.g. meta-llama/llama-3.3-70b-instruct:free" style="width: 100%; box-sizing: border-box;" required>
-            <span style="font-size: 11px; color: var(--text-muted); margin-top: 3px; display: block;">Format: <code>organization/model-name[:variant]</code></span>
+            <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-soft);">OpenRouter Provider ID *</label>
+            <input type="text" id="modelProviderId" class="admin-input" placeholder="e.g. google/gemma-4-31b-it:free" style="width: 100%; box-sizing: border-box;" required>
+            <span style="font-size: 11px; color: var(--text-muted); margin-top: 3px; display: block;">Exact upstream model identifier sent to OpenRouter API (e.g. <code>organization/model-name[:variant]</code>)</span>
           </div>
 
           <div style="margin-bottom: 14px;">
@@ -122,11 +129,12 @@ function setupDom(container) {
             <div>
               <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-soft);">Application Roles (comma-separated)</label>
               <input type="text" id="modelRoles" class="admin-input" placeholder="general_chat, coding_assistant" style="width: 100%; box-sizing: border-box;">
-              <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px; display: block;">Valid: general_chat, coding_assistant, exam_revision, fallback, fast_classifier, security_guardrail</span>
+              <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px; display: block;">Options: general_chat, coding_assistant, exam_revision, fallback, fast_classifier, security_guardrail</span>
             </div>
             <div>
               <label style="display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-soft);">Capabilities (comma-separated)</label>
               <input type="text" id="modelCapabilities" class="admin-input" placeholder="coding, reasoning, fast" style="width: 100%; box-sizing: border-box;">
+              <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px; display: block;">Keywords describing strengths (e.g. math, coding, fast)</span>
             </div>
           </div>
 
@@ -146,7 +154,7 @@ function setupDom(container) {
           </div>
 
           <!-- Connection Test Box -->
-          <div id="testConnectionBox" style="margin-bottom: 20px; padding: 12px; background: rgba(0,0,0,0.2); border: 1px dashed var(--border); border-radius: 10px;">
+          <div id="testConnectionBox" style="margin-bottom: 18px; padding: 12px; background: rgba(0,0,0,0.25); border: 1px dashed var(--border); border-radius: 10px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
               <span style="font-size: 12px; font-weight: 600; color: var(--text-soft);">Connection Verification</span>
               <button type="button" id="testPingBtn" class="secondary-btn" style="padding: 4px 10px; font-size: 11px;">Test Ping to OpenRouter</button>
@@ -155,6 +163,9 @@ function setupDom(container) {
               Click "Test Ping" to verify model ID availability with a 1-token probe.
             </div>
           </div>
+
+          <!-- Error Alert Banner -->
+          <div id="modelFormErrorBanner" style="display: none; padding: 10px 14px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #f87171; font-size: 12px; margin-bottom: 16px;"></div>
 
           <div style="display: flex; gap: 10px; justify-content: flex-end;">
             <button type="button" id="cancelModelModalBtn" class="secondary-btn" style="padding: 8px 18px;">Cancel</button>
@@ -182,6 +193,17 @@ function bindEvents() {
   const cancelBtn = document.getElementById("cancelModelModalBtn");
   if (cancelBtn) cancelBtn.addEventListener("click", () => closeModal());
 
+  const closeXBtn = document.getElementById("closeModelModalXBtn");
+  if (closeXBtn) closeXBtn.addEventListener("click", () => closeModal());
+
+  // Close modal when clicking on backdrop
+  const modal = document.getElementById("modelConfigModal");
+  if (modal) {
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+  }
+
   const form = document.getElementById("modelConfigForm");
   if (form) form.addEventListener("submit", (e) => handleFormSubmit(e));
 
@@ -206,7 +228,6 @@ async function loadModels(forceRefresh = false) {
     return pendingLoadPromise;
   }
 
-  // Reuse cached list if already loaded and not an explicit refresh
   if (modelsList.length > 0 && !forceRefresh) {
     renderTable();
     return modelsList;
@@ -235,9 +256,8 @@ async function loadModels(forceRefresh = false) {
       }
 
       const data = await res.json();
-      const rawList = Array.isArray(data.models) ? data.models : [];
-      const APPROVED_KEYS = new Set(["general_chat", "coding_assistant", "fallback_model", "apodex_mini"]);
-      modelsList = rawList.filter(m => APPROVED_KEYS.has(m.internal_key));
+      modelsList = Array.isArray(data.models) ? data.models : [];
+      updateCountBadge();
       renderTable();
       return modelsList;
     } catch (err) {
@@ -255,6 +275,13 @@ async function loadModels(forceRefresh = false) {
   })();
 
   return pendingLoadPromise;
+}
+
+function updateCountBadge() {
+  const badge = document.getElementById("modelCountBadge");
+  if (!badge) return;
+  const activeCount = modelsList.filter(m => m.enabled).length;
+  badge.textContent = `${modelsList.length} Models (${activeCount} Active)`;
 }
 
 function renderTable() {
@@ -350,20 +377,57 @@ function dispatchAdminModelAction(action, key) {
 window._adminModelAction = dispatchAdminModelAction;
 
 function openAddModal() {
-  alertToast("Adding new models is disabled. The system is strictly restricted to the 4 approved whitelist models.", "warning");
+  editingModelKey = null;
+  const modal = document.getElementById("modelConfigModal");
+  if (!modal) return;
+
+  clearFormError();
+  document.getElementById("modelModalTitle").textContent = "Add New AI Model";
+  const keyInput = document.getElementById("modelInternalKey");
+  keyInput.disabled = false;
+  keyInput.value = "";
+  keyInput.placeholder = "e.g. gemma_exam_pro";
+  document.getElementById("modelInternalKeyHint").textContent = "Unique lowercase key (e.g. gemma_exam_pro). Cannot be changed after creation.";
+
+  const providerInput = document.getElementById("modelProviderId");
+  providerInput.value = "";
+  providerInput.disabled = false;
+  providerInput.placeholder = "e.g. google/gemma-4-31b-it:free";
+  providerInput.title = "Enter the exact OpenRouter provider model identifier.";
+
+  document.getElementById("modelDisplayName").value = "";
+  document.getElementById("modelDescription").value = "";
+  document.getElementById("modelRoles").value = "general_chat";
+  document.getElementById("modelCapabilities").value = "chat, reasoning";
+  document.getElementById("modelFallbackPriority").value = "1";
+  document.getElementById("modelIsDefault").checked = false;
+  document.getElementById("modelEnabled").checked = true;
+  document.getElementById("testPingResult").innerHTML = "Click 'Test Ping' to verify model ID availability with a 1-token probe.";
+
+  modal.classList.add("show");
+  modal.style.display = "flex";
 }
 
 function openEditModal(model) {
   editingModelKey = model.internal_key;
-  document.getElementById("modelModalTitle").textContent = `Configure Model: ${model.display_name}`;
+  const modal = document.getElementById("modelConfigModal");
+  if (!modal) return;
+
+  clearFormError();
+  document.getElementById("modelModalTitle").textContent = `Edit Model: ${model.display_name}`;
+
   const keyInput = document.getElementById("modelInternalKey");
-  keyInput.disabled = true;
   keyInput.value = model.internal_key;
+  keyInput.disabled = true; // Internal key is the stable identifier
+  document.getElementById("modelInternalKeyHint").textContent = "Internal keys identify logical model records and cannot be altered.";
+
+  // Both display_name and provider_id are fully editable!
   document.getElementById("modelDisplayName").value = model.display_name || "";
   const providerInput = document.getElementById("modelProviderId");
   providerInput.value = model.provider_id || "";
-  providerInput.disabled = true;
-  providerInput.title = "Provider ID is locked to the approved whitelist value.";
+  providerInput.disabled = false;
+  providerInput.title = "Exact upstream model ID sent to OpenRouter.";
+
   document.getElementById("modelDescription").value = model.description || "";
   document.getElementById("modelRoles").value = (model.roles || []).join(", ");
   document.getElementById("modelCapabilities").value = (model.capabilities || []).join(", ");
@@ -372,16 +436,38 @@ function openEditModal(model) {
   document.getElementById("modelEnabled").checked = model.enabled !== false;
   document.getElementById("testPingResult").innerHTML = "Click 'Test Ping' to verify model ID availability with a 1-token probe.";
 
-  document.getElementById("modelConfigModal").style.display = "flex";
+  modal.classList.add("show");
+  modal.style.display = "flex";
 }
 
 function closeModal() {
-  document.getElementById("modelConfigModal").style.display = "none";
+  const modal = document.getElementById("modelConfigModal");
+  if (modal) {
+    modal.classList.remove("show");
+    modal.style.display = "none";
+  }
   editingModelKey = null;
+  clearFormError();
+}
+
+function setFormError(msg) {
+  const banner = document.getElementById("modelFormErrorBanner");
+  if (!banner) return;
+  banner.textContent = msg;
+  banner.style.display = "block";
+}
+
+function clearFormError() {
+  const banner = document.getElementById("modelFormErrorBanner");
+  if (!banner) return;
+  banner.textContent = "";
+  banner.style.display = "none";
 }
 
 async function handleFormSubmit(e) {
   e.preventDefault();
+  clearFormError();
+
   const submitBtn = document.getElementById("saveModelSubmitBtn");
   submitBtn.disabled = true;
   submitBtn.textContent = "Saving...";
@@ -398,6 +484,26 @@ async function handleFormSubmit(e) {
 
   const roles = rolesRaw.split(",").map(r => r.trim()).filter(Boolean);
   const capabilities = capabilitiesRaw.split(",").map(c => c.trim()).filter(Boolean);
+
+  // Client-side validation
+  if (!rawKey) {
+    setFormError("Internal Key is required.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Save Model";
+    return;
+  }
+  if (!displayName || displayName.length < 2) {
+    setFormError("Display Name must be at least 2 characters.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Save Model";
+    return;
+  }
+  if (!providerId || !providerId.includes("/")) {
+    setFormError("OpenRouter Provider ID must be in format 'organization/model-name[:variant]'.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Save Model";
+    return;
+  }
 
   const payload = {
     internal_key: rawKey,
@@ -427,12 +533,14 @@ async function handleFormSubmit(e) {
       throw new Error(data.error || `HTTP ${res.status}`);
     }
 
-    alertToast("Model saved successfully!", "success");
+    alertToast(`Model '${displayName}' saved successfully!`, "success");
     closeModal();
     window.dispatchEvent(new CustomEvent("model-registry-updated"));
     await loadModels(true);
   } catch (err) {
     console.error("[AdminModelRegistry] Save error:", err);
+    // Keep modal open and preserve form values
+    setFormError(`Save failed: ${err.message}`);
     alertToast(err.message, "error");
   } finally {
     submitBtn.disabled = false;
@@ -463,7 +571,25 @@ async function toggleModelEnabled(model) {
 }
 
 async function confirmDeleteModel(model) {
-  alertToast(`Approved model '${model.display_name}' cannot be deleted. The system requires all 4 whitelist models. You can disable this model instead.`, "warning");
+  const confirmed = window.confirm(`Are you sure you want to delete model '${model.display_name}' (${model.internal_key})? This action cannot be undone.`);
+  if (!confirmed) return;
+
+  try {
+    const res = await adminFetch(`/api/admin/models/${encodeURIComponent(model.internal_key)}`, {
+      method: "DELETE"
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+
+    alertToast(`Model '${model.display_name}' deleted successfully.`, "success");
+    window.dispatchEvent(new CustomEvent("model-registry-updated"));
+    await loadModels(true);
+  } catch (err) {
+    alertToast(err.message, "error");
+  }
 }
 
 async function handleTestPing() {
@@ -487,16 +613,16 @@ async function handleTestPing() {
     });
 
     const data = await res.json();
-    if (!res.ok || !data.testResult?.ok) {
-      const errMsg = data.testResult?.error || data.error || `HTTP ${res.status}`;
+    if (!res.ok || !data.ok) {
+      const errMsg = data.error || `HTTP ${res.status}`;
       resultDiv.innerHTML = `
-        <div style="color: #ef4444; font-weight: 600;">❌ Test Failed (${data.testResult?.latencyMs || 0}ms)</div>
+        <div style="color: #ef4444; font-weight: 600;">❌ Test Failed (${data.latencyMs || 0}ms)</div>
         <div style="color: var(--text-soft); font-size: 11px; margin-top: 2px;">${escapeHtml(errMsg)}</div>
       `;
     } else {
       resultDiv.innerHTML = `
-        <div style="color: #34d399; font-weight: 600;">✅ Connection Verified (${data.testResult.latencyMs}ms)</div>
-        <div style="color: var(--text-soft); font-size: 11px; margin-top: 2px;">Model responded: <em>"${escapeHtml(data.testResult.reply)}"</em></div>
+        <div style="color: #34d399; font-weight: 600;">✅ Connection Verified (${data.latencyMs}ms)</div>
+        <div style="color: var(--text-soft); font-size: 11px; margin-top: 2px;">Model responded: <em>"${escapeHtml(data.reply)}"</em></div>
       `;
     }
   } catch (err) {

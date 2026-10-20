@@ -120,8 +120,17 @@ export function invalidateModelCache() {
 if (typeof window !== "undefined") {
   window.addEventListener("model-registry-updated", () => {
     invalidateModelCache();
+    const selectEl = document.getElementById("aiModelSelect");
+    const detailsContainer = document.getElementById("aiModelDetailsContainer");
+    if (selectEl) {
+      const currentVal = selectEl.value;
+      populateModelSelect(selectEl, currentVal, detailsContainer).catch(err => {
+        console.warn("[ModelRegistryClient] Auto-refresh of model selector failed:", err.message);
+      });
+    }
   });
 }
+
 
 /**
  * Populate a <select> element with registry models and render dynamic metadata details
@@ -156,18 +165,20 @@ export async function populateModelSelect(selectEl, currentSelection = "auto", d
     }
   }
 
-  // Filter models for user selector (show general/coding chat models, omit pure fallback and internal classifier models)
+  const USER_FACING_ROLES = ["general_chat", "coding_assistant", "exam_revision"];
   const userSelectableModels = models.filter(m => {
     if (!m.enabled) return false;
-    if (m.internal_key === "fallback_model" || m.internal_key === "apodex_mini") return false;
+    // Check if role filter is requested
     if (options.role) {
-      return Array.isArray(m.roles) && m.roles.includes(options.role);
+      return Array.isArray(m.roles) && (m.roles.includes(options.role) || (options.role === "exam_revision" && m.roles.includes("general_chat")));
     }
+    // Must have at least one user-facing role
     if (Array.isArray(m.roles)) {
-      return m.roles.some(r => ["general_chat", "coding_assistant"].includes(r));
+      return m.roles.some(r => USER_FACING_ROLES.includes(r));
     }
-    return m.internal_key === "general_chat" || m.internal_key === "coding_assistant";
+    return true;
   });
+
 
   // Build options
   selectEl.innerHTML = "";
